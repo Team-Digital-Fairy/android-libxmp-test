@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">jni_shared_test</string>
+    <string name="change_view">Change View</string>
+    <string name="pause">Pause</string>
 </resources>

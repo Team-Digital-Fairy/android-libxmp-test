@@ -41,9 +41,14 @@ static SLVolumeItf                      bqPlayerVolume;
 static bool isPaused = true;
 static bool isLoaded = false;
 
+static const char *note_name[] = {"C-", "C#", "D-", "D#", "E-", "F-",
+                                  "F#", "G-", "G#", "A-", "A#", "B-"};
+
 static xmp_context ctx = NULL;
 static xmp_module_info mi;
 static xmp_frame_info fi;
+
+
 
 extern "C" {
 
@@ -61,6 +66,7 @@ static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {
     renderedSz[currentbuffer] = buffer_size;
     xmp_get_frame_info(ctx,&fi);
     */
+    // TODO: Can we do it better?
     xmp_play_frame(ctx);
     xmp_get_frame_info(ctx,&fi);
     pthread_mutex_unlock(&lock_context);
@@ -78,7 +84,7 @@ static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {
 static void togglePause() {
     isPaused = !isPaused;
     (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[0],sizeof(buffer[0]));
-    currentbuffer ^= 1;
+    //currentbuffer ^= 1;
 }
 
 static void stopPlaying() {
@@ -211,7 +217,7 @@ void endOpenSLES() {
         engineEngine = NULL;
     }
     free(buffer[0]);
-    free(buffer[1]);
+    //free(buffer[1]);
 }
 
 
@@ -237,16 +243,30 @@ JNIEXPORT jboolean JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jclass clazz, jstring filename) {
     if(ctx == NULL) ctx = xmp_create_context(); // Should've been done.
     (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
-
+    struct xmp_test_info ti;
+    int ret;
     const char* filepath = env->GetStringUTFChars(filename,0);
 
     FILE *fp = fopen(filepath,"rb");
+    if(fp == NULL) {
+        LOG_E("File is not a valid file");
+        return false;
+    }
+    if((ret = xmp_test_module_from_file(fp,&ti))) {
+        LOG_E("test failed: err=%d",ret);
+        return false;
+    }
+    LOG_D("Check OK: %s %s",ti.name,ti.type);
+
+    // get file size
     fseek(fp, 0, SEEK_END);
     size_t filesize = ftell(fp);
-    LOG_D("Filesize %d", filesize);
+    LOG_D("Filesize %u", filesize);
     rewind(fp);
+    // get filesize end
+
     // TODO: Write some configuration (You need to trash the load_module to change the config on-the-fly)
-    int ret = xmp_load_module_from_file(ctx,fp,filesize);
+    ret = xmp_load_module_from_file(ctx,fp,filesize);
     xmp_set_player(ctx, XMP_PLAYER_INTERP, XMP_INTERP_LINEAR);
     xmp_set_player(ctx, XMP_PLAYER_VOICES, 256);
     xmp_get_module_info(ctx,&mi);
@@ -272,10 +292,13 @@ JNIEXPORT jstring JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getFrameInfo(JNIEnv *env, jclass clazz) {
     static char string_buf[256];
     pthread_mutex_lock(&lock_frameinfo);
-    snprintf(string_buf,256,"Ptn %d Spd %d Bpm %d Row %d",fi.pattern,fi.speed,fi.bpm,fi.row);
+    xmp_frame_info cur_fi = fi;
     pthread_mutex_unlock(&lock_frameinfo);
+
+    snprintf(string_buf,256,"Ptn %d Spd %d Bpm %d Row %d  (V)RT %d/%d",cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,cur_fi.time,cur_fi.total_time);
     return env->NewStringUTF(string_buf);
 }
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_togglePause(JNIEnv *env, jclass clazz) {
@@ -287,9 +310,11 @@ JNIEXPORT jstring JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getChannelInfo(JNIEnv *env, jclass clazz, jint ch) {
     static char string_buf[256];
     if(ch >= 64) ch = 63;
+
     pthread_mutex_lock(&lock_frameinfo);
     xmp_channel_info ci = fi.channel_info[ch];
     pthread_mutex_unlock(&lock_frameinfo);
+
     snprintf(string_buf,256,"%02d: Per %08X Pos %08X",ch,ci.period,ci.position);
     return env->NewStringUTF(string_buf);
 }
@@ -297,4 +322,50 @@ extern "C"
 JNIEXPORT jint JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getChannels(JNIEnv *env, jclass clazz) {
     return mi.mod->chn;
+}
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRunningTime(JNIEnv *env, jclass clazz) {
+    return fi.time;
+}
+
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getTotalTime(JNIEnv *env, jclass clazz) {
+    return fi.total_time;
+}
+
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowEvt(JNIEnv *env, jclass clazz, jint row, jint channel) {
+    // TODO: This function is very heavy to use if you call often.
+    static char string_buf[128];
+    static char nb[8];
+    pthread_mutex_lock(&lock_frameinfo);
+    struct xmp_channel_info *current_ci = &fi.channel_info[channel];
+    pthread_mutex_unlock(&lock_frameinfo);
+    struct xmp_event *evt = &current_ci->event;
+
+
+
+    if(evt->note > 0x80)
+        snprintf(nb,5,"===");
+    else if(evt->note > 0)
+        snprintf(nb,5,"%s%d",note_name[evt->note % 12],evt->note / 12);
+    else
+        snprintf(nb,5,"---");
+
+    snprintf(string_buf,128,"%s %02X %d-%d",nb,evt->ins,evt->fxt,evt->fxp);
+
+    return env->NewStringUTF(string_buf);
+
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getCurrentRow(JNIEnv *env, jclass clazz) {
+    pthread_mutex_lock(&lock_frameinfo);
+    int r = fi.row;
+    pthread_mutex_unlock(&lock_frameinfo);
+    return r;
 }

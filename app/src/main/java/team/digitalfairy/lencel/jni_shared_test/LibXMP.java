@@ -18,6 +18,11 @@ public class LibXMP {
     public static native int getChannels();
     public static native String getChannelInfo(int ch);
 
+    // information
+    public static native long getRunningTime();
+    public static native long getTotalTime();
 
 
+    public static native String getRowEvt(int row, int channel);
+    public static native int getCurrentRow();
 }
