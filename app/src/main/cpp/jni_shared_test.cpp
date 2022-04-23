@@ -295,7 +295,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getFrameInfo(JNIEnv *env,
     xmp_frame_info cur_fi = fi;
     pthread_mutex_unlock(&lock_frameinfo);
 
-    snprintf(string_buf,256,"Ptn %d Spd %d Bpm %d Row %d  (V)RT %d/%d",cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,cur_fi.time,cur_fi.total_time);
+    snprintf(string_buf,256,"Ptn %02X Spd %d Bpm %3d Row %2d (V)RT %d/%d",cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,cur_fi.time,cur_fi.total_time);
     return env->NewStringUTF(string_buf);
 }
 
@@ -368,4 +368,58 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getCurrentRow(JNIEnv *env
     int r = fi.row;
     pthread_mutex_unlock(&lock_frameinfo);
     return r;
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env, jclass clazz, jint pattern) {
+    // Returns string of each line
+    // Like
+    // C-500 C-603... return everything from row
+
+    static char string_buf[8192];
+    static char nb[8];
+    jclass string_class = env->FindClass("java/lang/String");
+    jobjectArray arr = env->NewObjectArray(fi.num_rows,string_class,NULL);
+    int rowlen = mi.mod->xxp[pattern]->rows;
+    int channels = mi.mod->chn;
+    LOG_D("Query P %d got ROWLEN = %d",pattern,rowlen)
+
+    for(int i=0;i<rowlen; i++) {
+        // get all track, and eval each event in one row
+        int buf_pos = 0;
+        for(int t=0; t<channels; t++) {
+            int trk_indx = mi.mod->xxp[pattern]->index[t];
+            struct xmp_event *evt = &mi.mod->xxt[trk_indx]->event[i];
+            int evte = evt->note;
+            int ins = evt->ins;
+
+            if(evte > 0x80)
+                snprintf(nb,4,"===");
+            else if(evte > 0) {
+                int n = evte - 1;
+                snprintf(nb,4,"%s%1d",note_name[n % 12], n/12);
+            } else snprintf(nb,4,"---");
+
+            if(ins > 0) snprintf(nb+5,3,"%02X",ins);
+            else snprintf(nb+5,3,"--");
+
+            buf_pos += snprintf(string_buf+buf_pos,8192 - buf_pos,"%s%s ",nb,nb+5);
+        }
+        //LOG_D("%s",string_buf)
+        env->SetObjectArrayElement(arr,i,env->NewStringUTF(string_buf));
+    }
+
+
+    return arr;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getCurrentPattern(JNIEnv *env, jclass clazz) {
+    return fi.pattern;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getTotalRows(JNIEnv *env, jclass clazz) {
+    return fi.num_rows;
 }

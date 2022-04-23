@@ -3,20 +3,22 @@ package team.digitalfairy.lencel.jni_shared_test;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.content.Context;
+import android.graphics.Color;
 import android.graphics.Typeface;
 import android.media.AudioManager;
 import android.os.Bundle;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.LinearLayout;
-import android.widget.ListView;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -26,12 +28,14 @@ public class MainActivity extends AppCompatActivity {
 
     TextView statusText;
     LinearLayout channelListView;
+    ScrollView channelListView_sv;
     ProgressBar timebar;
 
     Button pauseButton;
     Button changeViewButton;
 
     static int currentView = 0;
+    boolean isScrollEnabled = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -40,6 +44,11 @@ public class MainActivity extends AppCompatActivity {
 
         statusText = findViewById(R.id.statusText);
         channelListView = findViewById(R.id.channelListView);
+        channelListView_sv = findViewById(R.id.channelListScrollView);
+
+        channelListView_sv.setOnTouchListener((v, event) -> !isScrollEnabled);
+
+
         timebar = findViewById(R.id.runntingTimeBar);
 
         pauseButton = findViewById(R.id.pauseButton);
@@ -53,7 +62,7 @@ public class MainActivity extends AppCompatActivity {
 
         LibXMP.startOpenSLES(Integer.parseInt(am.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)), Integer.parseInt(am.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)));
 
-        boolean r = LibXMP.loadFile("/sdcard/mod/AFFLICT.S3M");
+        boolean r = LibXMP.loadFile("/sdcard/mod/chiptune/xm/reed-imploder.xm");
         if(r)
             LibXMP.togglePause();
 
@@ -101,6 +110,10 @@ public class MainActivity extends AppCompatActivity {
 
         channelListView.clearAnimation();
         channelListView.removeAllViews();
+        isScrollEnabled = true;
+        channelListView.setScrollY(0);
+        //channelListView.requestDisallowInterceptTouchEvent(true);
+
 
         int channels = LibXMP.getChannels();
         TextView[] tvs = new TextView[channels];
@@ -141,14 +154,57 @@ public class MainActivity extends AppCompatActivity {
     }
 
     void runView2() {
+        // TODO: Figure out how to allow horizontal overflow scroll?
         if(sf != null) sf.cancel(true);
+
+        AtomicInteger current_showing_pattern = new AtomicInteger(LibXMP.getCurrentPattern());
+        String[] ve = LibXMP.getRowString(current_showing_pattern.get());
 
         channelListView.clearAnimation();
         channelListView.removeAllViews();
+        isScrollEnabled = false;
+        //channelListView.requestDisallowInterceptTouchEvent(false);
+        int middle = channelListView.getHeight() / 2;
+        Log.d(MAINACTIVITY_LOGTAG,"W "+channelListView.getWidth()+" H"+channelListView.getHeight());
+
+        channelListView.setScrollY(-1 * middle);
+
+        TextView[] tvs = new TextView[256];
+        for(int i=0; i<256; i++) {
+            tvs[i] = new TextView(this);
+            tvs[i].setSingleLine(true);
+            tvs[i].setTypeface(Typeface.MONOSPACE);
+
+        }
+
+        for(int i=0; i<LibXMP.getTotalRows(); i++) {
+            // TODO: Temporary
+            tvs[i].setText(ve[i]);
+            channelListView.addView(tvs[i]);
+        }
+        // Initally populate
 
         sf = ex.scheduleAtFixedRate(() -> {
-
+            int c = LibXMP.getCurrentPattern();
+            int cr = LibXMP.getCurrentRow();
             runOnUiThread(() -> {
+                if(current_showing_pattern.get() != c) {
+                    // remove all views
+                    channelListView.removeAllViews();
+                    // Query new string
+                    String[] cur_ptn = LibXMP.getRowString(c);
+                    for(int i=0; i<LibXMP.getTotalRows(); i++) {
+                        // TODO: Temporary
+                        tvs[i].setText(cur_ptn[i]);
+                        channelListView.addView(tvs[i]);
+                    }
+                    current_showing_pattern.set(c);
+                }
+
+                channelListView.setScrollY((-1 * middle) + 42*cr);
+                if(cr != 0)
+                    tvs[cr - 1].setBackgroundColor(Color.TRANSPARENT);
+                tvs[cr].setBackgroundColor(Color.GRAY);
 
             });
         },0,32, TimeUnit.MILLISECONDS);
