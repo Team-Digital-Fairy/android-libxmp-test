@@ -372,13 +372,14 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getCurrentRow(JNIEnv *env
 
 extern "C"
 JNIEXPORT jobjectArray JNICALL
-Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env, jclass clazz, jint pattern) {
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env, jclass clazz, jint pattern, jint size) {
     // Returns string of each line
     // Like
     // C-500 C-603... return everything from row
 
     static char string_buf[8192];
     static char nb[8];
+    static char vol[8];
     jclass string_class = env->FindClass("java/lang/String");
     jobjectArray arr = env->NewObjectArray(fi.num_rows,string_class,NULL);
     int rowlen = mi.mod->xxp[pattern]->rows;
@@ -387,7 +388,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
 
     for(int i=0;i<rowlen; i++) {
         // get all track, and eval each event in one row
-        int buf_pos = 0;
+        int buf_pos = 4;
         for(int t=0; t<channels; t++) {
             int trk_indx = mi.mod->xxp[pattern]->index[t];
             struct xmp_event *evt = &mi.mod->xxt[trk_indx]->event[i];
@@ -404,8 +405,44 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
             if(ins > 0) snprintf(nb+5,3,"%02X",ins);
             else snprintf(nb+5,3,"--");
 
-            buf_pos += snprintf(string_buf+buf_pos,8192 - buf_pos,"%s%s ",nb,nb+5);
+            // Volume
+            if(evt->vol == 0 && evt->f2t != 0) {
+                // Volume Column is event
+                snprintf(vol,4,"%01d%02X",evt->f2t,evt->f2p);
+
+            } else if (evt->vol != 0) {
+                // Volume is actually volume
+                snprintf(vol,4,"v%02X",evt->vol);
+
+            } else {
+                // None
+                snprintf(vol,4,"---");
+            }
+
+            switch(size) {
+                case 0:
+                default:
+                    // Note+Ins (Low)
+                    buf_pos += snprintf(string_buf + buf_pos, 8192 - buf_pos, "%s%s ", nb, nb + 5);
+                    break;
+
+                case 1:
+
+                    // Parse volume column; Includes
+                    // Note+Ins+Vol (Mid)
+                    buf_pos += snprintf(string_buf + buf_pos, 8192 - buf_pos, "%s%s%s ", nb, nb + 5, vol);
+                    break;
+
+                case 2:
+                    // Note+Ins+Vol+Eff (Hi)
+                    buf_pos += snprintf(string_buf + buf_pos, 8192 - buf_pos, "%s%s%s--- ", nb, nb + 5, vol);
+                    break;
+
+
+            }
         }
+        snprintf(nb,5,"%02X: ",i);
+        memcpy(string_buf,nb,4);
         //LOG_D("%s",string_buf)
         env->SetObjectArrayElement(arr,i,env->NewStringUTF(string_buf));
     }
