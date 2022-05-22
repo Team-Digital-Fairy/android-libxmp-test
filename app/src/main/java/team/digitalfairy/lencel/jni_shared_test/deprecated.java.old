@@ -1,0 +1,86 @@
+    void runView2(int size) {
+        // TODO: Figure out how to allow horizontal overflow scroll?
+        if(sf != null) sf.cancel(true);
+
+        // Calculate sp -> px
+        float f = getResources().getDisplayMetrics().scaledDensity;
+        final int txsz = 10;
+        final float v_tx = f*txsz;
+        Log.d(MAINACTIVITY_LOGTAG,"sp ="+ f +" px="+f*txsz);
+        AtomicInteger current_showing_pattern = new AtomicInteger(LibXMP.getCurrentPattern());
+        String[] ve = LibXMP.getRowString(current_showing_pattern.get(),size);
+
+        channelListView.clearAnimation();
+        channelListView.removeAllViews();
+
+        //channelListView.requestDisallowInterceptTouchEvent(false);
+
+        Log.d(MAINACTIVITY_LOGTAG,"View2: W"+channelListView.getWidth()+" H"+channelListView.getHeight());
+        AtomicInteger middle = new AtomicInteger(channelListView.getHeight() / 2);
+        Log.d(MAINACTIVITY_LOGTAG,"m "+middle.get());
+
+        //channelListView.setScrollY((-1 * middle) + (int)(txsz*f)*LibXMP.getCurrentRow());
+        channelListView.scrollTo(0,(-1 * middle.get()));
+        isScrollEnabled = false;
+
+        TextView[] tvs = new TextView[256];
+        for(int i=0; i<256; i++) {
+            tvs[i] = new TextView(this);
+            tvs[i].setSingleLine(true);
+            tvs[i].setTypeface(Typeface.MONOSPACE);
+            tvs[i].setTextSize(txsz);
+        }
+
+        for(int i=0; i<LibXMP.getTotalRows(); i++) {
+            // TODO: Temporary
+            tvs[i].setText(ve[i]);
+            channelListView.addView(tvs[i]);
+        }
+
+        Log.d(MAINACTIVITY_LOGTAG,"View2: W"+channelListView.getWidth()+" H"+channelListView.getHeight());
+        middle.set(channelListView.getHeight() / 2);
+        Log.d(MAINACTIVITY_LOGTAG,"m "+middle.get());
+        //channelListView.setScrollY((-1 *middle) + (int)(txsz*f)*LibXMP.getCurrentRow());
+        channelListView.scrollTo(0,(-1 * middle.get()));
+
+
+        // Initally populate
+        // TODO: Fix garbage scrolling. Probably need to math per-line scrolling and such... plz help
+        AtomicInteger current_row = new AtomicInteger(LibXMP.getCurrentRow());
+        sf = ex.scheduleAtFixedRate(() -> {
+            int c = LibXMP.getCurrentPattern();
+            int cr = LibXMP.getCurrentRow();
+            runOnUiThread(() -> {
+                // TODO: Prevent Loading Twice
+                if(current_showing_pattern.get() != c || cr == 0) {
+                    // remove all views
+                    channelListView.removeAllViews();
+                    // Query new string
+                    String[] cur_ptn = LibXMP.getRowString(c,size);
+
+                    for(int i=0; i<LibXMP.getTotalRows(); i++) {
+                        // TODO: Temporary
+                        tvs[i].setText(cur_ptn[i]);
+
+                        channelListView.addView(tvs[i]);
+                    }
+                    current_showing_pattern.set(c);
+                    middle.set(channelListView.getHeight() / 2);
+                    channelListView.scrollTo(0,(-1 * middle.get()));
+
+                }
+                if(current_row.get() != cr) {
+                    channelListView.scrollBy(0,(int)(txsz*f)+1);
+                    debugText.setText("SCRY:"+channelListView.getScrollY());
+                    if(cr != 0)
+                        tvs[cr - 1].setBackgroundColor(Color.TRANSPARENT);
+                    tvs[cr].setBackgroundColor(Color.GRAY);
+                    current_row.set(cr);
+                }
+
+                //channelListView.setScrollY((-1 * middle) + (int)(txsz*f)*cr);
+
+
+            });
+        },0,32, TimeUnit.MILLISECONDS);
+    }

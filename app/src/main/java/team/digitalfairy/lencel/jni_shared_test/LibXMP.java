@@ -28,4 +28,7 @@ public class LibXMP {
     public static native int getCurrentPattern();
     public static native int getTotalRows();
     public static native String[] getRowString(int pattern, int length);
+    public static native int getOrdinal();
+
+
 }

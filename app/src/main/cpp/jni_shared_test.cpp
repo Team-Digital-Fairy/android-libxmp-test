@@ -81,11 +81,7 @@ static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {
     // this requires buffer count in sample. render will be *2 internally
 }
 
-static void togglePause() {
-    isPaused = !isPaused;
-    (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[0],sizeof(buffer[0]));
-    //currentbuffer ^= 1;
-}
+
 
 static void stopPlaying() {
     isPaused = true;
@@ -119,10 +115,10 @@ void startOpenSLES(int nsr, int fpb) {
 
     // allocate buffer
     buffer[0] = static_cast<int16_t *>(malloc(buffer_size * sizeof(int16_t) * 2)); // buffer_size is in 16bit. malloc() returns in byte. and render in stereo.
-    //buffer[1] = static_cast<int16_t *>(malloc(buffer_size * sizeof(int16_t) * 2));
+    buffer[1] = static_cast<int16_t *>(malloc(buffer_size * sizeof(int16_t) * 2));
 
     memset(buffer[0],0,buffer_size * sizeof(int16_t) * 2);
-    //memset(buffer[1],0,buffer_size * sizeof(int16_t) * 2);
+    memset(buffer[1],0,buffer_size * sizeof(int16_t) * 2);
 
     res = slCreateEngine(&engineObject, 0, NULL, 0, NULL, NULL);
     assert(res == SL_RESULT_SUCCESS);
@@ -136,7 +132,7 @@ void startOpenSLES(int nsr, int fpb) {
     assert(res == SL_RESULT_SUCCESS);
 
     //SLDataFormat_PCM format_pcm;
-    SLDataLocator_AndroidSimpleBufferQueue locBufQ = {SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, 4};
+    SLDataLocator_AndroidSimpleBufferQueue locBufQ = {SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, 8};
     SLAndroidDataFormat_PCM_EX format_pcm_ex = {
             .formatType = SL_ANDROID_DATAFORMAT_PCM_EX,
             .numChannels = 2,
@@ -243,10 +239,16 @@ JNIEXPORT jboolean JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jclass clazz, jstring filename) {
     if(ctx == NULL) ctx = xmp_create_context(); // Should've been done.
     (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
+    isPaused = true;
+    isLoaded = false;
+
+
     struct xmp_test_info ti;
     int ret;
     const char* filepath = env->GetStringUTFChars(filename,0);
 
+    xmp_end_player(ctx);
+    if(isLoaded) xmp_release_module(ctx);
     FILE *fp = fopen(filepath,"rb");
     if(fp == NULL) {
         LOG_E("File is not a valid file");
@@ -279,9 +281,12 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     isPaused = true;
     ret = xmp_start_player(ctx,sample_rate,0);
     LOG_D("xmp_Start_player() = %d",ret);
-
+    /*
     (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],sizeof(buffer[currentbuffer]));
     currentbuffer ^= 1;
+     */
+    // Kick start
+
     fclose(fp);
     return true;
 }
@@ -302,7 +307,11 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getFrameInfo(JNIEnv *env,
 extern "C"
 JNIEXPORT void JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_togglePause(JNIEnv *env, jclass clazz) {
-    togglePause();
+    isPaused = !isPaused;
+    (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[0],8);
+
+    currentbuffer ^= 1;
+
     (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PLAYING);
 }
 extern "C"
@@ -380,11 +389,13 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
     static char string_buf[8192];
     static char nb[8];
     static char vol[8];
+    pthread_mutex_lock(&lock_frameinfo);
     jclass string_class = env->FindClass("java/lang/String");
-    jobjectArray arr = env->NewObjectArray(fi.num_rows,string_class,NULL);
+    jobjectArray arr = env->NewObjectArray(fi.num_rows,string_class, nullptr);
+    pthread_mutex_unlock(&lock_frameinfo);
     int rowlen = mi.mod->xxp[pattern]->rows;
     int channels = mi.mod->chn;
-    LOG_D("Query P %d got ROWLEN = %d",pattern,rowlen)
+    //LOG_D("Query P %d got ROWLEN = %d",pattern,rowlen)
 
     for(int i=0;i<rowlen; i++) {
         // get all track, and eval each event in one row
@@ -453,10 +464,24 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
 extern "C"
 JNIEXPORT jint JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getCurrentPattern(JNIEnv *env, jclass clazz) {
-    return fi.pattern;
+    pthread_mutex_lock(&lock_frameinfo);
+    xmp_frame_info cur_fi = fi;
+    pthread_mutex_unlock(&lock_frameinfo);
+    return cur_fi.pattern;
 }
 extern "C"
 JNIEXPORT jint JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getTotalRows(JNIEnv *env, jclass clazz) {
-    return fi.num_rows;
+    pthread_mutex_lock(&lock_frameinfo);
+    xmp_frame_info cur_fi = fi;
+    pthread_mutex_unlock(&lock_frameinfo);
+    return cur_fi.num_rows;
+}
+extern "C"
+JNIEXPORT jint JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getOrdinal(JNIEnv *env, jclass clazz) {
+    pthread_mutex_lock(&lock_frameinfo);
+    xmp_frame_info cur_fi = fi;
+    pthread_mutex_unlock(&lock_frameinfo);
+    return cur_fi.pos;
 }

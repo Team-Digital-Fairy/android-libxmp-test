@@ -66,13 +66,14 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toEndOf="@+id/changeViewButton" />
 
-    <TextView
-        android:id="@+id/debugTextView"
+    <Button
+        android:id="@+id/loadButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
-        android:layout_marginBottom="16dp"
-        android:text="TextView"
+        android:layout_marginStart="8dp"
+        android:layout_marginBottom="8dp"
+        android:text="Load..."
+        android:textSize="12sp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toEndOf="@+id/pauseButton" />
 
