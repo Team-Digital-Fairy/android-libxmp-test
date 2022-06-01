@@ -277,6 +277,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     ret = xmp_load_module_from_file(ctx,fp,filesize);
     xmp_set_player(ctx, XMP_PLAYER_INTERP, XMP_INTERP_LINEAR);
     xmp_set_player(ctx, XMP_PLAYER_VOICES, 256);
+    xmp_set_player(ctx, XMP_PLAYER_DEFPAN, 80);
     xmp_get_module_info(ctx,&mi);
     if(ret) {
         LOG_D("err: %d", ret);
@@ -306,7 +307,8 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getFrameInfo(JNIEnv *env,
     xmp_frame_info cur_fi = fi;
     pthread_mutex_unlock(&lock_frameinfo);
 
-    snprintf(string_buf,256,"Ptn %02X Spd %d Bpm %3d Row %2d %d/%d",cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,cur_fi.time,cur_fi.total_time);
+    snprintf(string_buf,256,"Ord %02X Ptn %02X Spd %d Bpm %3d Row %2d\nF %d V %02X Vir %3d/%3d %d/%d",cur_fi.pos,cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,
+             cur_fi.frame,cur_fi.volume,cur_fi.virt_used,cur_fi.virt_channels,cur_fi.time,cur_fi.total_time);
     return env->NewStringUTF(string_buf);
 }
 

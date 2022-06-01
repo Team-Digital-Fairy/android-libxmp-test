@@ -208,8 +208,11 @@ public class MainActivity extends AppCompatActivity {
                                 //runView2(2);
                                 runView3(2);
                         }
+                        timebar.setMax((int) LibXMP.getTotalTime());
                         persistentStatusView();
+
                     }
+
                 });
         fileDialog.show();
     }
@@ -259,7 +262,7 @@ public class MainActivity extends AppCompatActivity {
             channelListView.addView(tvs[i]);
             channelListView.addView(tvs_ch[i]);
         }
-        timebar.setMax((int) LibXMP.getTotalTime());
+
 
         sf = ex.scheduleAtFixedRate(() -> {
             //String frameinfo_string = LibXMP.getFrameInfo();
@@ -281,30 +284,33 @@ public class MainActivity extends AppCompatActivity {
 
     void runView3(int size) {
         //
+        isScrollEnabled = false;
+        channelListView.setScrollY(0);
 
         channelListView.clearAnimation();
         channelListView.removeAllViews();
 
-        AtomicInteger on_curptn = new AtomicInteger(LibXMP.getCurrentPattern());
-        AtomicInteger on_row = new AtomicInteger(LibXMP.getCurrentRow());
+        int on_curptn =  LibXMP.getCurrentPattern();
+        int on_row = LibXMP.getCurrentRow();
 
-        final int allocVal = 31;
+        final int allocVal = 47;
 
         TextView[] tvs = new TextView[allocVal];
         for(int i=0; i<allocVal; i++) {
             tvs[i] = new TextView(this);
             tvs[i].setSingleLine(true);
             tvs[i].setTypeface(Typeface.MONOSPACE);
+            tvs[i].setTextSize(10.0F);
             channelListView.addView(tvs[i]);
         }
         int middle = allocVal / 2;
 
         tvs[middle].setBackgroundColor(Color.GRAY);
 
-        String[] cur_ptn = LibXMP.getRowString(on_curptn.get(),size);
+        String[] cur_ptn = LibXMP.getRowString(on_curptn,size);
         // and set current row, and 32 patterns over 32 lines of TextView
         for(int i=0; i<allocVal; i++) {
-            int offset = on_row.get() + i - middle;
+            int offset = on_row + i - middle;
             if(offset <= 0) {
                 tvs[i].setText("");
                 continue;
@@ -324,14 +330,15 @@ public class MainActivity extends AppCompatActivity {
 
         sf = ex.scheduleAtFixedRate(() -> {
             try {
-                //if (isPaused) return;
-                // TODO: make thing render once; otherwise update?
+                // TODO: Write code that takes pattern once, then change what's rendered to 2nd time? querying every time this function run seems excessive?
+                if (isPaused) return;
                 int c = LibXMP.getCurrentPattern();
                 int cr = LibXMP.getCurrentRow();
                 //int ord = LibXMP.getOrdinal();
                 int cur_ord = LibXMP.getOrdinal();
 
-                String[] ptn = LibXMP.getRowString(on_curptn.get(), size);
+                String[] ptn = LibXMP.getRowString(c, size);
+                /*
                 //String[] ptn = cur_ptn;
                 if (ord.get() != cur_ord) {
                     ord.set(cur_ord);
@@ -349,26 +356,29 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 if (on_row.get() != cr || needRender.get() || gotRendered.get()) {
-                    runOnUiThread(() -> {
-                        // and set current row, and 32 patterns over 32 lines of TextView
-                        for (int i = 0; i < allocVal; i++) {
-                            int offset = cr + i - middle;
-                            if (offset < 0) {
-                                tvs[i].setText("");
-                                continue;
-                            }
-                            if (offset >= ptn.length) {
-                                tvs[i].setText("");
-                            } else {
-                                tvs[i].setText(ptn[offset]);
-                            }
+                */
+
+                runOnUiThread(() -> {
+                    // and set current row, and 32 patterns over 32 lines of TextView
+                    for (int i = 0; i < allocVal; i++) {
+                        int offset = cr + i - middle;
+                        if (offset < 0) {
+                            tvs[i].setText("");
+                            continue;
                         }
-                        // Redraw
-                        on_row.set(cr);
-                    });
-                    gotRendered.set(false);
-                    needRender.set(false);
-                }
+                        if (offset >= ptn.length) {
+                            tvs[i].setText("");
+                        } else {
+                            tvs[i].setText(ptn[offset]);
+                        }
+                    }
+                    // Redraw
+                    //on_row.set(cr);
+                });
+
+                    //gotRendered.set(false);
+                    //needRender.set(false);
+
             } catch (Exception e) {
                 e.printStackTrace();
             }
