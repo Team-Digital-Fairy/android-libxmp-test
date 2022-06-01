@@ -217,6 +217,7 @@ public class MainActivity extends AppCompatActivity {
 
     void persistentStatusView() {
         ex.scheduleAtFixedRate(() -> {
+            if(isPaused) return;
             String frameinfo_string = LibXMP.getFrameInfo();
             runOnUiThread(() -> {
                 timebar.setProgress((int) LibXMP.getRunningTime());

@@ -61,23 +61,25 @@ static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {
     pthread_mutex_lock(&lock_context);
     pthread_mutex_lock(&lock_frameinfo);
     // TODO: Write Callback function.
-    /*
-    xmp_play_buffer(ctx,buffer[currentbuffer],buffer_size,0);
+
+    xmp_play_buffer(ctx,buffer[currentbuffer],buffer_size * sizeof(int16_t) * 2,0);
     renderedSz[currentbuffer] = buffer_size;
     xmp_get_frame_info(ctx,&fi);
-    */
+
+    /*
     // TODO: Can we do it better?
     xmp_play_frame(ctx);
     xmp_get_frame_info(ctx,&fi);
-    pthread_mutex_unlock(&lock_context);
+    */
+     pthread_mutex_unlock(&lock_context);
 
-    //res = (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],renderedSz[currentbuffer] * sizeof(int16_t) * 2); // in byte.
-    res = (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue,fi.buffer,fi.buffer_size);
+    res = (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],renderedSz[currentbuffer] * sizeof(int16_t) * 2); // in byte.
+    //res = (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue,fi.buffer,fi.buffer_size);
     pthread_mutex_unlock(&lock_frameinfo);
 
     if(res != SL_RESULT_SUCCESS)
         LOG_D("Error on Enqueue? %d", res);
-    //currentbuffer ^= 1; // first, render.
+    currentbuffer ^= 1; // first, render.
     // this requires buffer count in sample. render will be *2 internally
 }
 
@@ -109,6 +111,7 @@ void startOpenSLES(int nsr, int fpb) {
     ctx = xmp_create_context();
 
     buffer_size = fpb; // Stereo
+    //buffer_size = 48000;
     sample_rate = nsr;
 
     LOG_D("C-Side: OpenSL start with sample rate %d, buffersz %d",sample_rate,buffer_size);
@@ -177,7 +180,7 @@ void startOpenSLES(int nsr, int fpb) {
     res = (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
     assert(res == SL_RESULT_SUCCESS);
 
-    res = (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],sizeof(buffer[currentbuffer]));
+    res = (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[0],buffer_size * sizeof(int16_t) * 2);
 
     if(res != SL_RESULT_SUCCESS) {
         abort();
@@ -240,7 +243,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     if(ctx == NULL) ctx = xmp_create_context(); // Should've been done.
     (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
     isPaused = true;
-    isLoaded = false;
+
 
 
     struct xmp_test_info ti;
@@ -249,6 +252,9 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
 
     xmp_end_player(ctx);
     if(isLoaded) xmp_release_module(ctx);
+
+    isLoaded = false;
+
     FILE *fp = fopen(filepath,"rb");
     if(fp == NULL) {
         LOG_E("File is not a valid file");
@@ -281,10 +287,10 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     isPaused = true;
     ret = xmp_start_player(ctx,sample_rate,0);
     LOG_D("xmp_Start_player() = %d",ret);
-    /*
+
     (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],sizeof(buffer[currentbuffer]));
     currentbuffer ^= 1;
-     */
+
     // Kick start
 
     fclose(fp);
@@ -300,7 +306,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getFrameInfo(JNIEnv *env,
     xmp_frame_info cur_fi = fi;
     pthread_mutex_unlock(&lock_frameinfo);
 
-    snprintf(string_buf,256,"Ptn %02X Spd %d Bpm %3d Row %2d (V)RT %d/%d",cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,cur_fi.time,cur_fi.total_time);
+    snprintf(string_buf,256,"Ptn %02X Spd %d Bpm %3d Row %2d %d/%d",cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,cur_fi.time,cur_fi.total_time);
     return env->NewStringUTF(string_buf);
 }
 
@@ -308,11 +314,14 @@ extern "C"
 JNIEXPORT void JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_togglePause(JNIEnv *env, jclass clazz) {
     isPaused = !isPaused;
-    (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[0],8);
-
+    if(isPaused) {
+        (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],buffer_size * sizeof(int16_t) * 2);
+        (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
+    } else {
+        //(*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],buffer_size * sizeof(int16_t) * 2);
+        (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PLAYING);
+    }
     currentbuffer ^= 1;
-
-    (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PLAYING);
 }
 extern "C"
 JNIEXPORT jstring JNICALL
@@ -386,14 +395,17 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
     // Like
     // C-500 C-603... return everything from row
 
-    static char string_buf[8192];
+    static char string_buf[32768];
     static char nb[8];
     static char vol[8];
-    pthread_mutex_lock(&lock_frameinfo);
+    static char evt_str[8];
+
     jclass string_class = env->FindClass("java/lang/String");
-    jobjectArray arr = env->NewObjectArray(fi.num_rows,string_class, nullptr);
+
+    pthread_mutex_lock(&lock_frameinfo);
     pthread_mutex_unlock(&lock_frameinfo);
     int rowlen = mi.mod->xxp[pattern]->rows;
+    jobjectArray arr = env->NewObjectArray(rowlen,string_class, nullptr);
     int channels = mi.mod->chn;
     //LOG_D("Query P %d got ROWLEN = %d",pattern,rowlen)
 
@@ -415,6 +427,20 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
 
             if(ins > 0) snprintf(nb+5,3,"%02X",ins);
             else snprintf(nb+5,3,"--");
+
+            // Event
+            if(evt->fxt == 0 && evt->fxp != 0) {
+                // XM Arp Event
+                snprintf(evt_str,5,"%02X%02X",evt->fxt,evt->fxp);
+
+            } else if (evt->fxt != 0) {
+                // Event is actually having some meaningful character
+                snprintf(evt_str,5,"%02X%02X",evt->fxt, evt->fxp);
+
+            } else {
+                // None
+                snprintf(evt_str,5,"----");
+            }
 
             // Volume
             if(evt->vol == 0 && evt->f2t != 0) {
@@ -446,7 +472,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
 
                 case 2:
                     // Note+Ins+Vol+Eff (Hi)
-                    buf_pos += snprintf(string_buf + buf_pos, 8192 - buf_pos, "%s%s%s--- ", nb, nb + 5, vol);
+                    buf_pos += snprintf(string_buf + buf_pos, 8192 - buf_pos, "%s%s%s%s ", nb, nb + 5, vol, evt_str);
                     break;
 
 
@@ -455,7 +481,9 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
         snprintf(nb,5,"%02X: ",i);
         memcpy(string_buf,nb,4);
         //LOG_D("%s",string_buf)
-        env->SetObjectArrayElement(arr,i,env->NewStringUTF(string_buf));
+        jstring str = env->NewStringUTF(string_buf);
+
+        env->SetObjectArrayElement(arr,i,str);
     }
 
 
