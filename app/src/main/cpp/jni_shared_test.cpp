@@ -277,7 +277,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     ret = xmp_load_module_from_file(ctx,fp,filesize);
     xmp_set_player(ctx, XMP_PLAYER_INTERP, XMP_INTERP_LINEAR);
     xmp_set_player(ctx, XMP_PLAYER_VOICES, 256);
-    xmp_set_player(ctx, XMP_PLAYER_DEFPAN, 80);
+    xmp_set_player(ctx, XMP_PLAYER_DEFPAN, 75);
     xmp_get_module_info(ctx,&mi);
     if(ret) {
         LOG_D("err: %d", ret);
@@ -335,7 +335,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getChannelInfo(JNIEnv *en
     xmp_channel_info ci = fi.channel_info[ch];
     pthread_mutex_unlock(&lock_frameinfo);
 
-    snprintf(string_buf,256,"%02d: Per %08X Pos %08X",ch,ci.period,ci.position);
+    snprintf(string_buf,256,"%02d: Per %08X Pos %08X Pan %02X Is %02X%02X",ch,ci.period,ci.position,ci.pan,ci.instrument,ci.sample);
     return env->NewStringUTF(string_buf);
 }
 extern "C"
@@ -376,7 +376,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowEvt(JNIEnv *env, jc
     else
         snprintf(nb,5,"---");
 
-    snprintf(string_buf,128,"%s %02X %d-%d",nb,evt->ins,evt->fxt,evt->fxp);
+    snprintf(string_buf,128,"%s %02X %02X%02X %02X%02X",nb,evt->ins,evt->fxt,evt->fxp,evt->f2t,evt->f2p);
 
     return env->NewStringUTF(string_buf);
 
