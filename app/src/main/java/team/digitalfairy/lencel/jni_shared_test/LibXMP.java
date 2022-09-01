@@ -30,5 +30,7 @@ public class LibXMP {
     public static native String[] getRowString(int pattern, int length);
     public static native int getOrdinal();
 
+    public static native String getLoadedTitleOrFilename();
+
 
 }

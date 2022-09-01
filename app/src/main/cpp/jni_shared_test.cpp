@@ -24,10 +24,10 @@ static pthread_mutex_t lock_frameinfo;
 
 
 static int16_t *buffer[2]; // buffer for audio
-static size_t buffer_size = 192; // actual buffer size 44100 counts in 16bit
+static uint32_t buffer_size = 192; // actual buffer size 44100 counts in 16bit
 static uint8_t currentbuffer = 0;
-static size_t renderedSz[2];
-static size_t sample_rate = 48000;
+static uint32_t renderedSz[2];
+static uint32_t sample_rate = 48000;
 
 static SLObjectItf engineObject;
 static SLEngineItf engineEngine;
@@ -62,7 +62,11 @@ static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {
     pthread_mutex_lock(&lock_frameinfo);
     // TODO: Write Callback function.
 
-    xmp_play_buffer(ctx,buffer[currentbuffer],buffer_size * sizeof(int16_t) * 2,0);
+    int r = xmp_play_buffer(ctx,buffer[currentbuffer],buffer_size * sizeof(int16_t) * 2,0);
+    if(r && r != -XMP_END) {
+        LOG_E("Err %d",r);
+        return;
+    }
     renderedSz[currentbuffer] = buffer_size;
     xmp_get_frame_info(ctx,&fi);
 
@@ -88,7 +92,7 @@ static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {
 static void stopPlaying() {
     isPaused = true;
     memset(buffer[0],0,buffer_size * sizeof(int16_t) * 2);
-    //memset(buffer[1],0,buffer_size * sizeof(int16_t) * 2);
+    memset(buffer[1],0,buffer_size * sizeof(int16_t) * 2);
     isLoaded = false;
     if(ctx != NULL) xmp_free_context(ctx);
     // TODO: Write Load function
@@ -110,7 +114,7 @@ void startOpenSLES(int nsr, int fpb) {
     //Init
     ctx = xmp_create_context();
 
-    buffer_size = fpb; // Stereo
+    buffer_size = fpb * 2 * 3; // Stereo
     //buffer_size = 48000;
     sample_rate = nsr;
 
@@ -135,7 +139,7 @@ void startOpenSLES(int nsr, int fpb) {
     assert(res == SL_RESULT_SUCCESS);
 
     //SLDataFormat_PCM format_pcm;
-    SLDataLocator_AndroidSimpleBufferQueue locBufQ = {SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, 8};
+    SLDataLocator_AndroidSimpleBufferQueue locBufQ = {SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE, 4};
     SLAndroidDataFormat_PCM_EX format_pcm_ex = {
             .formatType = SL_ANDROID_DATAFORMAT_PCM_EX,
             .numChannels = 2,
@@ -275,9 +279,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
 
     // TODO: Write some configuration (You need to trash the load_module to change the config on-the-fly)
     ret = xmp_load_module_from_file(ctx,fp,filesize);
-    xmp_set_player(ctx, XMP_PLAYER_INTERP, XMP_INTERP_LINEAR);
-    xmp_set_player(ctx, XMP_PLAYER_VOICES, 256);
-    xmp_set_player(ctx, XMP_PLAYER_DEFPAN, 75);
+
     xmp_get_module_info(ctx,&mi);
     if(ret) {
         LOG_D("err: %d", ret);
@@ -286,11 +288,17 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     LOG_D("LOADED OK");
     isLoaded = true;
     isPaused = true;
+
     ret = xmp_start_player(ctx,sample_rate,0);
     LOG_D("xmp_Start_player() = %d",ret);
 
-    (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],sizeof(buffer[currentbuffer]));
-    currentbuffer ^= 1;
+    xmp_set_player(ctx, XMP_PLAYER_INTERP, XMP_INTERP_LINEAR);
+    xmp_set_player(ctx, XMP_PLAYER_VOICES, 256);
+    xmp_set_player(ctx, XMP_PLAYER_DEFPAN, 70);
+    xmp_set_player(ctx, XMP_PLAYER_MIX, 50);
+
+    //(*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],sizeof(buffer[currentbuffer]));
+    //currentbuffer ^= 1;
 
     // Kick start
 
@@ -335,7 +343,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getChannelInfo(JNIEnv *en
     xmp_channel_info ci = fi.channel_info[ch];
     pthread_mutex_unlock(&lock_frameinfo);
 
-    snprintf(string_buf,256,"%02d: Per %08X Pos %08X Pan %02X Is %02X%02X",ch,ci.period,ci.position,ci.pan,ci.instrument,ci.sample);
+    snprintf(string_buf,256,"%02d: P %08X Ps %08X Pan %02X Is %02X%02X V %02d",ch,ci.period,ci.position,ci.pan,ci.instrument,ci.sample,ci.volume);
     return env->NewStringUTF(string_buf);
 }
 extern "C"
@@ -346,13 +354,19 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getChannels(JNIEnv *env, 
 extern "C"
 JNIEXPORT jlong JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRunningTime(JNIEnv *env, jclass clazz) {
-    return fi.time;
+    pthread_mutex_lock(&lock_frameinfo);
+    long time = fi.time;
+    pthread_mutex_unlock(&lock_frameinfo);
+    return time;
 }
 
 extern "C"
 JNIEXPORT jlong JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getTotalTime(JNIEnv *env, jclass clazz) {
-    return fi.total_time;
+    pthread_mutex_lock(&lock_frameinfo);
+    long time = fi.total_time;
+    pthread_mutex_unlock(&lock_frameinfo);
+    return time;
 }
 
 
@@ -367,8 +381,6 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowEvt(JNIEnv *env, jc
     pthread_mutex_unlock(&lock_frameinfo);
     struct xmp_event *evt = &current_ci->event;
 
-
-
     if(evt->note > 0x80)
         snprintf(nb,5,"===");
     else if(evt->note > 0)
@@ -376,7 +388,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowEvt(JNIEnv *env, jc
     else
         snprintf(nb,5,"---");
 
-    snprintf(string_buf,128,"%s %02X %02X%02X %02X%02X",nb,evt->ins,evt->fxt,evt->fxp,evt->f2t,evt->f2p);
+    snprintf(string_buf,128,"%s %02X %02X %02X%02X %02X%02X",nb,evt->ins,evt->vol,evt->fxt,evt->fxp,evt->f2t,evt->f2p);
 
     return env->NewStringUTF(string_buf);
 
@@ -403,9 +415,10 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
     static char evt_str[8];
 
     jclass string_class = env->FindClass("java/lang/String");
-
+    /*
     pthread_mutex_lock(&lock_frameinfo);
     pthread_mutex_unlock(&lock_frameinfo);
+    */
     int rowlen = mi.mod->xxp[pattern]->rows;
     jobjectArray arr = env->NewObjectArray(rowlen,string_class, nullptr);
     int channels = mi.mod->chn;
@@ -461,20 +474,23 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowString(JNIEnv *env,
             switch(size) {
                 case 0:
                 default:
-                    // Note+Ins (Low)
-                    buf_pos += snprintf(string_buf + buf_pos, 8192 - buf_pos, "%s%s ", nb, nb + 5);
+                    // Note
+                    buf_pos += snprintf(string_buf + buf_pos, 32768 - buf_pos, "%s ", nb);
                     break;
-
                 case 1:
-
-                    // Parse volume column; Includes
-                    // Note+Ins+Vol (Mid)
-                    buf_pos += snprintf(string_buf + buf_pos, 8192 - buf_pos, "%s%s%s ", nb, nb + 5, vol);
+                    // Note+Ins (Low)
+                    buf_pos += snprintf(string_buf + buf_pos, 32768 - buf_pos, "%s%s ", nb, nb + 5);
                     break;
 
                 case 2:
+                    // Parse volume column; Includes
+                    // Note+Ins+Vol (Mid)
+                    buf_pos += snprintf(string_buf + buf_pos, 32768 - buf_pos, "%s%s%s ", nb, nb + 5, vol);
+                    break;
+
+                case 3:
                     // Note+Ins+Vol+Eff (Hi)
-                    buf_pos += snprintf(string_buf + buf_pos, 8192 - buf_pos, "%s%s%s%s ", nb, nb + 5, vol, evt_str);
+                    buf_pos += snprintf(string_buf + buf_pos, 32768 - buf_pos, "%s%s%s%s ", nb, nb + 5, vol, evt_str);
                     break;
 
 
@@ -514,4 +530,10 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getOrdinal(JNIEnv *env, j
     xmp_frame_info cur_fi = fi;
     pthread_mutex_unlock(&lock_frameinfo);
     return cur_fi.pos;
+}
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getLoadedTitleOrFilename(JNIEnv *env, jclass clazz) {
+    const char* name = mi.mod->name;
+    return env->NewStringUTF(name);
 }

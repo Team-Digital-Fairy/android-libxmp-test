@@ -2,4 +2,5 @@
     <string name="app_name">jni_shared_test</string>
     <string name="change_view">Change View</string>
     <string name="pause">Pause</string>
+    <string name="xmp_version">XMP Version = %1$s</string>
 </resources>

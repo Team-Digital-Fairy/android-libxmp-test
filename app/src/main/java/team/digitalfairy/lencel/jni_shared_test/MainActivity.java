@@ -4,14 +4,20 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.media.AudioManager;
+import android.media.session.MediaSession;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
@@ -26,15 +32,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends AppCompatActivity {
     private final String MAINACTIVITY_LOGTAG = "MainActivity";
     private final ScheduledExecutorService ex = Executors.newScheduledThreadPool(2);
     private ScheduledFuture<?> sf = null;
-    private final int viewLength = 4;
+    private final int viewLength = 5;
 
+    TextView titleText;
     TextView statusText;
     TextView debugText;
     LinearLayout channelListView;
@@ -50,13 +56,35 @@ public class MainActivity extends AppCompatActivity {
     boolean isPaused = true;
 
     private String m_lastPath = "";
+    private NotificationManager nm;
+    private String notificationId = "Notification1";
+
+
+    private void createNotificationChannel() {
+        if(nm.getNotificationChannel(notificationId) == null) {
+            NotificationChannel ch = new NotificationChannel(notificationId, "LibXMP Playback Service Notif", NotificationManager.IMPORTANCE_DEFAULT);
+            nm.createNotificationChannel(ch);
+        }
+    }
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        // acquire media session
+        Log.i(MAINACTIVITY_LOGTAG,"getSystemSvc");
+        nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        createNotificationChannel();
+        
+
+        Intent sI = new Intent(this, MainService.class);
+        startForegroundService(sI);
+
+
         statusText = findViewById(R.id.statusText);
+        titleText = findViewById(R.id.titleText);
         channelListView = findViewById(R.id.channelListView);
         channelListView_sv = findViewById(R.id.channelListScrollView);
         //debugText = findViewById(R.id.debugTextView);
@@ -80,6 +108,8 @@ public class MainActivity extends AppCompatActivity {
 
         LibXMP.startOpenSLES(Integer.parseInt(am.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)), Integer.parseInt(am.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)));
 
+        statusText.setText(getString(R.string.xmp_version,LibXMP.getXMPVersion()));
+
         loadButton.setOnClickListener(this::OnOpenFileClick);
 
         changeViewButton.setOnClickListener((v) -> {
@@ -90,25 +120,26 @@ public class MainActivity extends AppCompatActivity {
                 case 0:
                     runView();
                     break;
-
                 case 1:
                     runView3(0);
-                    //runView2(0);
                     break;
                 case 2:
+                    //runView2(0);
                     runView3(1);
-
-                    //runView2(1);
                     break;
                 case 3:
+                    //runView2(1);
                     runView3(2);
-
+                    break;
+                case 4:
                     //runView2(2);
+                    runView3(3);
 
             }
         });
 
         pauseButton.setOnClickListener((v) -> {
+            // make it so it doesn't call togglePause when it's not loaded
             isPaused = !isPaused;
             LibXMP.togglePause();
         });
@@ -197,18 +228,30 @@ public class MainActivity extends AppCompatActivity {
                                 break;
 
                             case 1:
-                                //runView2(0);
                                 runView3(0);
                                 break;
+
                             case 2:
-                                //runView2(1);
+                                //runView2(0);
                                 runView3(1);
                                 break;
                             case 3:
-                                //runView2(2);
+                                //runView2(1);
                                 runView3(2);
+                                break;
+                            case 4:
+                                //runView2(2);
+                                runView3(3);
                         }
                         timebar.setMax((int) LibXMP.getTotalTime());
+                        Log.i(MAINACTIVITY_LOGTAG, String.format("TotalTime %d", LibXMP.getTotalTime()));
+                        titleText.setText(LibXMP.getLoadedTitleOrFilename());
+                        Notification nn = new NotificationCompat.Builder(this,notificationId)
+                                .setContentTitle(LibXMP.getLoadedTitleOrFilename())
+                                .setSmallIcon(R.drawable.ic_launcher_background)
+                                        .build();
+
+                        nm.notify(100,nn);
                         persistentStatusView();
 
                     }
@@ -291,7 +334,7 @@ public class MainActivity extends AppCompatActivity {
         channelListView.removeAllViews();
 
         int on_curptn =  LibXMP.getCurrentPattern();
-        int on_row = LibXMP.getCurrentRow();
+        AtomicInteger on_row = new AtomicInteger(LibXMP.getCurrentRow());
 
         final int allocVal = 47;
 
@@ -310,7 +353,7 @@ public class MainActivity extends AppCompatActivity {
         String[] cur_ptn = LibXMP.getRowString(on_curptn,size);
         // and set current row, and 32 patterns over 32 lines of TextView
         for(int i=0; i<allocVal; i++) {
-            int offset = on_row + i - middle;
+            int offset = on_row.get() + i - middle;
             if(offset <= 0) {
                 tvs[i].setText("");
                 continue;
@@ -322,12 +365,6 @@ public class MainActivity extends AppCompatActivity {
         }
         Log.i(MAINACTIVITY_LOGTAG, "Sched");
 
-        AtomicInteger ord = new AtomicInteger(LibXMP.getOrdinal());
-        AtomicBoolean gotRendered = new AtomicBoolean(false);
-        AtomicBoolean needRender = new AtomicBoolean(false);
-
-
-
         sf = ex.scheduleAtFixedRate(() -> {
             try {
                 // TODO: Write code that takes pattern once, then change what's rendered to 2nd time? querying every time this function run seems excessive?
@@ -336,6 +373,11 @@ public class MainActivity extends AppCompatActivity {
                 int cr = LibXMP.getCurrentRow();
                 //int ord = LibXMP.getOrdinal();
                 int cur_ord = LibXMP.getOrdinal();
+                // Reentry?
+                if(on_row.get() == cr) {
+                    //Log.d(MAINACTIVITY_LOGTAG, "Same Pattern");
+                    return;
+                }
 
                 String[] ptn = LibXMP.getRowString(c, size);
                 /*
@@ -378,11 +420,11 @@ public class MainActivity extends AppCompatActivity {
 
                     //gotRendered.set(false);
                     //needRender.set(false);
-
+                on_row.set(cr);
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        },0,32, TimeUnit.MILLISECONDS);
+        },0,30, TimeUnit.MILLISECONDS);
 
     }
 

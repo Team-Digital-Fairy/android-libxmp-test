@@ -9,6 +9,8 @@
     <!-- This game needs to have the resource directory at user's storage to allow easier customization and episodes placement -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -27,6 +29,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name=".MainService" android:exported="false" />
     </application>
 
 </manifest>
