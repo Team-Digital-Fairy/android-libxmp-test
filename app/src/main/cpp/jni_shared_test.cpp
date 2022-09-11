@@ -343,7 +343,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getChannelInfo(JNIEnv *en
     xmp_channel_info ci = fi.channel_info[ch];
     pthread_mutex_unlock(&lock_frameinfo);
 
-    snprintf(string_buf,256,"%02d: P %08X Ps %08X Pan %02X Is %02X%02X V %02d",ch,ci.period,ci.position,ci.pan,ci.instrument,ci.sample,ci.volume);
+    snprintf(string_buf,256,"%02d: P %08X Ps %06X Pan %02X Is %02X%02X V %02d",ch,ci.period,ci.position,ci.pan,ci.instrument,ci.sample,ci.volume);
     return env->NewStringUTF(string_buf);
 }
 extern "C"
@@ -388,7 +388,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getRowEvt(JNIEnv *env, jc
     else
         snprintf(nb,5,"---");
 
-    snprintf(string_buf,128,"%s %02X %02X %02X%02X %02X%02X",nb,evt->ins,evt->vol,evt->fxt,evt->fxp,evt->f2t,evt->f2p);
+    snprintf(string_buf,128,"%s %02X %02X %+06d %02X%02X %02X%02X",nb,evt->ins,evt->vol,current_ci->pitchbend,evt->fxt,evt->fxp,evt->f2t,evt->f2p);
 
     return env->NewStringUTF(string_buf);
 
