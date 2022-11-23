@@ -16,7 +16,7 @@ android {
         externalNativeBuild {
             cmake {
                 abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
-                cppFlags ''
+                cppFlags '-O2'
             }
         }
     }
@@ -34,7 +34,7 @@ android {
     externalNativeBuild {
         cmake {
             path file('src/main/cpp/CMakeLists.txt')
-            version '3.10.2'
+            //version '3.10.2'
         }
     }
 }

@@ -7,6 +7,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.media.session.MediaSession;
+import android.os.Binder;
 import android.os.IBinder;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.util.Log;
@@ -17,8 +18,24 @@ import androidx.core.app.NotificationCompat;
 public class MainService extends Service {
     private NotificationManager nm;
     private MediaSessionCompat mediaSession;
-
     private String notificationId = "Notification1";
+    private NotificationCompat.Builder bb;
+    private final IBinder ib = new LocalBinder();
+
+
+    public class LocalBinder extends Binder {
+        MainService getService() {
+            return MainService.this;
+        }
+    }
+
+    public void updateTitle(String title) {
+        // nothing to do
+        Log.i("MainService", "Got title "+title);
+        bb.setContentTitle(title);
+        nm.notify(100,bb.build());
+    }
+
     private void createNotificationChannel() {
         if(nm.getNotificationChannel(notificationId) == null) {
             NotificationChannel ch = new NotificationChannel(notificationId, "LibXMP Playback Service Notif", NotificationManager.IMPORTANCE_DEFAULT);
@@ -46,16 +63,17 @@ public class MainService extends Service {
                 .build();
         */
 
-        Notification nn = new NotificationCompat.Builder(this,notificationId)
+        Notification nn;
+
+        bb = new NotificationCompat.Builder(this,notificationId)
                 .addAction(android.R.drawable.ic_media_pause,"Pause",null)
                 .setContentTitle("サービス実行中！ - リリィ")
                 .setContentText("コンテンツ")
                 .setContentInfo("AAAAAA")
                 .setSmallIcon(R.drawable.ic_launcher_background)
-                .setStyle(new androidx.media.app.NotificationCompat.MediaStyle().setMediaSession(mediaSession.getSessionToken()))
-                .build();
+                .setStyle(new androidx.media.app.NotificationCompat.MediaStyle().setMediaSession(mediaSession.getSessionToken()));
 
-
+        nn = bb.build();
 
         startForeground(100,nn);
 
@@ -70,11 +88,12 @@ public class MainService extends Service {
     @Nullable
     @Override
     public IBinder onBind(Intent intent) {
-        return null;
+        return ib;
     }
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
+        stopForeground(true);
         stopSelf();
     }
 }

@@ -29,6 +29,8 @@ static uint8_t currentbuffer = 0;
 static uint32_t renderedSz[2];
 static uint32_t sample_rate = 48000;
 
+const char* current_filename;
+
 static SLObjectItf engineObject;
 static SLEngineItf engineEngine;
 static SLObjectItf outputMixObject;
@@ -47,6 +49,7 @@ static const char *note_name[] = {"C-", "C#", "D-", "D#", "E-", "F-",
 static xmp_context ctx = NULL;
 static xmp_module_info mi;
 static xmp_frame_info fi;
+struct xmp_test_info ti;
 
 
 
@@ -114,7 +117,7 @@ void startOpenSLES(int nsr, int fpb) {
     //Init
     ctx = xmp_create_context();
 
-    buffer_size = fpb * 2 * 3; // Stereo
+    buffer_size = fpb * 2 * 2; // Stereo
     //buffer_size = 48000;
     sample_rate = nsr;
 
@@ -223,6 +226,28 @@ void endOpenSLES() {
     //free(buffer[1]);
 }
 
+extern "C" void formatPatternEffect(uint8_t effect, uint8_t param, char* str) {
+    switch(effect) {
+        case 0: {
+            // this is the special effect where arp is denoted as 0xy in XM
+            if (param != 0) {
+                *str = '0';
+            } else {
+                *str = '-';
+            }
+        }
+            break;
+        case 1:
+            *str = '1';
+            break;
+        case 2:
+            *str = '2';
+            break;
+        default:
+            *str = '?';
+    }
+}
+
 
 extern "C"
 JNIEXPORT void JNICALL
@@ -248,9 +273,6 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
     isPaused = true;
 
-
-
-    struct xmp_test_info ti;
     int ret;
     const char* filepath = env->GetStringUTFChars(filename,0);
 
@@ -266,6 +288,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     }
     if((ret = xmp_test_module_from_file(fp,&ti))) {
         LOG_E("test failed: err=%d",ret);
+        fclose(fp);
         return false;
     }
     LOG_D("Check OK: %s %s",ti.name,ti.type);
@@ -276,6 +299,8 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     LOG_D("Filesize %u", filesize);
     rewind(fp);
     // get filesize end
+
+    current_filename = basename(filepath);
 
     // TODO: Write some configuration (You need to trash the load_module to change the config on-the-fly)
     ret = xmp_load_module_from_file(ctx,fp,filesize);
@@ -297,6 +322,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     xmp_set_player(ctx, XMP_PLAYER_DEFPAN, 70);
     xmp_set_player(ctx, XMP_PLAYER_MIX, 50);
 
+    xmp_get_frame_info(ctx, &fi);
     //(*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],sizeof(buffer[currentbuffer]));
     //currentbuffer ^= 1;
 
@@ -307,15 +333,15 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
 }
 
 
+
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getFrameInfo(JNIEnv *env, jclass clazz) {
-    static char string_buf[256];
-    pthread_mutex_lock(&lock_frameinfo);
+    static char string_buf[256];   pthread_mutex_lock(&lock_frameinfo);
     xmp_frame_info cur_fi = fi;
     pthread_mutex_unlock(&lock_frameinfo);
 
-    snprintf(string_buf,256,"Ord %02X Ptn %02X Spd %d Bpm %3d Row %2d\nF %d V %02X Vir %3d/%3d %d/%d",cur_fi.pos,cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,
+    snprintf(string_buf,256,"Ord %02X/%02X Ptn %02X Spd %d Bpm %3d Row %2d/%2d\nF %d V %02X Vir %3d/%3d %d/%d",cur_fi.pos,mi.mod->len,cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,cur_fi.num_rows,
              cur_fi.frame,cur_fi.volume,cur_fi.virt_used,cur_fi.virt_channels,cur_fi.time,cur_fi.total_time);
     return env->NewStringUTF(string_buf);
 }
@@ -323,6 +349,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getFrameInfo(JNIEnv *env,
 extern "C"
 JNIEXPORT void JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_togglePause(JNIEnv *env, jclass clazz) {
+    if(!isLoaded) return;
     isPaused = !isPaused;
     if(isPaused) {
         (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],buffer_size * sizeof(int16_t) * 2);
@@ -534,6 +561,45 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getOrdinal(JNIEnv *env, j
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getLoadedTitleOrFilename(JNIEnv *env, jclass clazz) {
-    const char* name = mi.mod->name;
+    const char* name;
+    name = mi.mod->name;
+    if(strlen(name) == 0) {
+        // try getting file name instead
+        name = current_filename;
+    }
     return env->NewStringUTF(name);
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getComments(JNIEnv *env, jclass clazz) {
+    char* cmt = mi.comment;
+    return env->NewStringUTF(cmt);
+}
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getInstrumentName(JNIEnv *env, jclass clazz, jint id) {
+    return env->NewStringUTF(mi.mod->xxi[id].name);
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getInstrumentCount(JNIEnv *env, jclass clazz) {
+    return mi.mod->ins;
+}
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_unloadFile(JNIEnv *env, jclass clazz) {
+    (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
+    isPaused = true;
+
+    pthread_mutex_lock(&lock_context);
+    xmp_stop_module(ctx);
+    xmp_end_player(ctx);
+    xmp_free_context(ctx);
+    ctx = NULL;
+    isLoaded = false;
+    pthread_mutex_unlock(&lock_context);
+
+    return true;
 }

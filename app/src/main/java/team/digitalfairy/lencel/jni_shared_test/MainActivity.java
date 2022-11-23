@@ -11,8 +11,10 @@ import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -20,6 +22,7 @@ import android.media.AudioManager;
 import android.media.session.MediaSession;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.IBinder;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -27,6 +30,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -38,7 +42,7 @@ public class MainActivity extends AppCompatActivity {
     private final String MAINACTIVITY_LOGTAG = "MainActivity";
     private final ScheduledExecutorService ex = Executors.newScheduledThreadPool(2);
     private ScheduledFuture<?> sf = null;
-    private final int viewLength = 5;
+    private final int viewLength = 6;
 
     TextView titleText;
     TextView statusText;
@@ -50,19 +54,24 @@ public class MainActivity extends AppCompatActivity {
     Button pauseButton;
     Button changeViewButton;
     Button loadButton;
+    Button stopButton;
 
-    static int currentView = 0;
+    static int currentView = -1;
     boolean isScrollEnabled = true;
     boolean isPaused = true;
+    boolean mBound = false;
 
     private String m_lastPath = "";
     private NotificationManager nm;
     private String notificationId = "Notification1";
 
+    private boolean isServiceRunning = true;
+    private Intent sI;
+    private MainService mService;
 
     private void createNotificationChannel() {
         if(nm.getNotificationChannel(notificationId) == null) {
-            NotificationChannel ch = new NotificationChannel(notificationId, "LibXMP Playback Service Notif", NotificationManager.IMPORTANCE_DEFAULT);
+            NotificationChannel ch = new NotificationChannel(notificationId, "LibXMP Playback Service Notification", NotificationManager.IMPORTANCE_DEFAULT);
             nm.createNotificationChannel(ch);
         }
     }
@@ -79,8 +88,7 @@ public class MainActivity extends AppCompatActivity {
         createNotificationChannel();
         
 
-        Intent sI = new Intent(this, MainService.class);
-        startForegroundService(sI);
+
 
 
         statusText = findViewById(R.id.statusText);
@@ -89,6 +97,7 @@ public class MainActivity extends AppCompatActivity {
         channelListView_sv = findViewById(R.id.channelListScrollView);
         //debugText = findViewById(R.id.debugTextView);
         loadButton = findViewById(R.id.loadButton);
+        stopButton = findViewById(R.id.stopButton);
 
         channelListView_sv.setOnTouchListener((v, event) -> !isScrollEnabled);
         timebar = findViewById(R.id.runntingTimeBar);
@@ -113,9 +122,13 @@ public class MainActivity extends AppCompatActivity {
         loadButton.setOnClickListener(this::OnOpenFileClick);
 
         changeViewButton.setOnClickListener((v) -> {
+            if(!isServiceRunning) return;
             if(isPaused) return;
             if(sf != null) sf.cancel(true);
+
             currentView++;
+            Toast t = Toast.makeText(this,String.format("View changed to %d",(currentView % viewLength)),Toast.LENGTH_SHORT);
+
             switch(currentView % viewLength) {
                 case 0:
                     runView();
@@ -134,8 +147,12 @@ public class MainActivity extends AppCompatActivity {
                 case 4:
                     //runView2(2);
                     runView3(3);
-
+                    break;
+                case 5:
+                    runCommentView();
+                    break;
             }
+            t.show();
         });
 
         pauseButton.setOnClickListener((v) -> {
@@ -144,8 +161,95 @@ public class MainActivity extends AppCompatActivity {
             LibXMP.togglePause();
         });
 
+        stopButton.setOnClickListener((v) -> {
+            if(!isServiceRunning) return;
 
+            if(sf != null) sf.cancel(true);
+            sf = null;
 
+            stopService(sI);
+            // and Clean Up
+            LibXMP.togglePause();
+            isPaused = true;
+            LibXMP.unloadFile();
+
+            isServiceRunning = false;
+        });
+
+    }
+
+    private ServiceConnection connection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            MainService.LocalBinder b = (MainService.LocalBinder) service;
+            mService = b.getService();
+            mBound = true;
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            mBound = false;
+        }
+    };
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        Log.d("MainActivity","onStart()");
+
+        sI = new Intent(this, MainService.class);
+        startForegroundService(sI);
+        bindService(sI, connection, Context.BIND_AUTO_CREATE);
+
+        if(sf == null && currentView != -1) {
+            // if thread is running on Stop condition
+            switch(currentView % viewLength) {
+                case 0:
+                    runView();
+                    break;
+                case 1:
+                    runView3(0);
+                    break;
+                case 2:
+                    //runView2(0);
+                    runView3(1);
+                    break;
+                case 3:
+                    //runView2(1);
+                    runView3(2);
+                    break;
+                case 4:
+                    //runView2(2);
+                    runView3(3);
+                    break;
+                case 5:
+                    runCommentView();
+                    break;
+            }
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        Log.d("MainActivity","onStop()");
+        unbindService(connection);
+
+        // Gotta end all bg threads; recover on onStart
+        if(currentView != -1) {
+            if(sf != null) sf.cancel(true);
+            sf = null;
+
+            // But remember last run
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Stop all LibXMP
+        LibXMP.unloadFile();
+        // TODO: Implement close SLES
     }
 
     public void OnOpenFileClick(View view) {
@@ -215,13 +319,18 @@ public class MainActivity extends AppCompatActivity {
                 .setCurrentDirectory(m_lastPath)
                 .setOpenDialogListener((fileName, lastPath) -> {
                     m_lastPath = lastPath;
+                    if(!isServiceRunning)
+                        startForegroundService(sI);
+
                     if(sf != null) sf.cancel(true);
 
                     boolean r = LibXMP.loadFile(fileName);
                     isPaused = true;
                     if(r) {
+                        if(currentView == -1) currentView = 0;
                         LibXMP.togglePause();
                         isPaused = false;
+
                         switch (currentView % viewLength) {
                             case 0:
                                 runView();
@@ -242,17 +351,25 @@ public class MainActivity extends AppCompatActivity {
                             case 4:
                                 //runView2(2);
                                 runView3(3);
+                                break;
+                            case 5:
+                                runCommentView();
+                                break;
                         }
                         timebar.setMax((int) LibXMP.getTotalTime());
+                        persistentStatusView();
+
                         Log.i(MAINACTIVITY_LOGTAG, String.format("TotalTime %d", LibXMP.getTotalTime()));
                         titleText.setText(LibXMP.getLoadedTitleOrFilename());
+                        mService.updateTitle(LibXMP.getLoadedTitleOrFilename());
+                        /*
                         Notification nn = new NotificationCompat.Builder(this,notificationId)
                                 .setContentTitle(LibXMP.getLoadedTitleOrFilename())
                                 .setSmallIcon(R.drawable.ic_launcher_background)
-                                        .build();
+                                .build();
 
                         nm.notify(100,nn);
-                        persistentStatusView();
+                        */
 
                     }
 
@@ -268,7 +385,6 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 timebar.setProgress((int) LibXMP.getRunningTime());
                 statusText.setText(frameinfo_string);
-
             });
         },0,32, TimeUnit.MILLISECONDS);
     }
@@ -426,6 +542,42 @@ public class MainActivity extends AppCompatActivity {
             }
         },0,30, TimeUnit.MILLISECONDS);
 
+    }
+
+    void runCommentView() {
+        isScrollEnabled = false;
+        channelListView.setScrollY(0);
+
+        channelListView.clearAnimation();
+        channelListView.removeAllViews();
+
+        sf = null;
+        String s = LibXMP.getComments();
+
+        if(s != null) {
+            if(s.length() != 0) {
+                TextView tv = new TextView(this);
+                tv.setTypeface(Typeface.MONOSPACE);
+                channelListView.addView(tv);
+
+                tv.setText(s);
+                return;
+            }
+        }
+
+        // Accumulate instruments
+        int c = 0;
+        TextView[] tvs = new TextView[LibXMP.getInstrumentCount()];
+        for(TextView tv : tvs) {
+            tv = new TextView(this);
+            tv.setText(LibXMP.getInstrumentName(c));
+            tv.setSingleLine(true);
+            tv.setTypeface(Typeface.MONOSPACE);
+            tv.setTextSize(10.0F);
+
+            channelListView.addView(tv);
+            c++;
+        }
     }
 
 }

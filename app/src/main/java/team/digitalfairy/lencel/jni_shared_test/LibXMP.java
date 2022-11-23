@@ -10,6 +10,7 @@ public class LibXMP {
 
     // libxmp function
     public static native boolean loadFile(String filename);
+    public static native boolean unloadFile();
     public static native void togglePause();
 
     public static native String getFrameInfo();
@@ -31,6 +32,8 @@ public class LibXMP {
     public static native int getOrdinal();
 
     public static native String getLoadedTitleOrFilename();
-
+    public static native String getComments();
+    public static native int getInstrumentCount();
+    public static native String getInstrumentName(int id);
 
 }
