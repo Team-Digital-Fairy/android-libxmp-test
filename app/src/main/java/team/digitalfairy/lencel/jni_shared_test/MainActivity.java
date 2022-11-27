@@ -20,6 +20,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.media.AudioManager;
 import android.media.session.MediaSession;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.IBinder;
@@ -40,7 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends AppCompatActivity {
     private final String MAINACTIVITY_LOGTAG = "MainActivity";
-    private final ScheduledExecutorService ex = Executors.newScheduledThreadPool(2);
+    private final ScheduledExecutorService ex = Executors.newScheduledThreadPool(3);
     private ScheduledFuture<?> sf = null;
     private final int viewLength = 6;
 
@@ -86,10 +87,6 @@ public class MainActivity extends AppCompatActivity {
         Log.i(MAINACTIVITY_LOGTAG,"getSystemSvc");
         nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         createNotificationChannel();
-        
-
-
-
 
         statusText = findViewById(R.id.statusText);
         titleText = findViewById(R.id.titleText);
@@ -104,10 +101,17 @@ public class MainActivity extends AppCompatActivity {
         pauseButton = findViewById(R.id.pauseButton);
         changeViewButton = findViewById(R.id.changeViewButton);
 
-        if (android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P)
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P)
             m_lastPath = Environment.getExternalStorageDirectory().getPath();
         else
             m_lastPath = "/storage/emulated/0";
+
+        // check for isExternalStorameManager()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if(Environment.isExternalStorageManager()) {
+                Log.d(MAINACTIVITY_LOGTAG, ">=R, it is ExternalStorageManager!");
+            }
+        }
 
         System.loadLibrary("jni_shared_test");
         Log.d(MAINACTIVITY_LOGTAG,LibXMP.getXMPVersion());
@@ -254,7 +258,7 @@ public class MainActivity extends AppCompatActivity {
 
     public void OnOpenFileClick(View view) {
         // Here, thisActivity is the current activity
-        if (checkFilePermissions(2))
+        if (checkFilePermissions(10))
             return;
         openMusicFileDialog();
     }
@@ -262,39 +266,44 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean checkFilePermissions(int requestCode) {
         final int grant = PackageManager.PERMISSION_GRANTED;
+        String exStorage = Manifest.permission.READ_EXTERNAL_STORAGE;
 
-
-        final String exStorage = Manifest.permission.READ_EXTERNAL_STORAGE;
-        if (ContextCompat.checkSelfPermission(this, exStorage) == grant) {
-            Log.d(MAINACTIVITY_LOGTAG, "File permission is granted");
-        } else {
-            Log.d(MAINACTIVITY_LOGTAG, "File permission is revoked");
+        // TODO: Seems A13 now requires more "Better" permissions...
+        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            exStorage = Manifest.permission.READ_MEDIA_AUDIO;
         }
 
+            if (ContextCompat.checkSelfPermission(this, exStorage) == grant) {
+                Log.d(MAINACTIVITY_LOGTAG, "File permission is granted");
+            } else {
+                Log.d(MAINACTIVITY_LOGTAG, "File permission is revoked");
+            }
 
-        if ((ContextCompat.checkSelfPermission(this, exStorage) == grant))
-            return false;
 
-        // Should we show an explanation?
-        if (ActivityCompat.shouldShowRequestPermissionRationale(this, exStorage)) {
-            // Show an explanation to the user *asynchronously* -- don't block
-            // this thread waiting for the user's response! After the user
-            // sees the explanation, try again to request the permission.
-            AlertDialog.Builder b = new AlertDialog.Builder(this);
-            b.setTitle("Permission denied");
-            b.setMessage("Sorry, but permission is denied!\n" +
-                    "Please, check the Read Extrnal Storage permission to application!");
-            b.setNegativeButton(android.R.string.ok, null);
-            b.show();
-            return true;
-        } else {
-            // No explanation needed, we can request the permission.
-            ActivityCompat.requestPermissions(this, new String[]{exStorage}, requestCode);
-            // MY_PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE
-            // MY_PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE is an
-            // app-defined int constant. The callback method gets the
-            // result of the request.
-        }
+            if ((ContextCompat.checkSelfPermission(this, exStorage) == grant))
+                return false;
+
+            // Should we show an explanation?
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, exStorage)) {
+                // Show an explanation to the user *asynchronously* -- don't block
+                // this thread waiting for the user's response! After the user
+                // sees the explanation, try again to request the permission.
+                AlertDialog.Builder b = new AlertDialog.Builder(this);
+                b.setTitle("Permission denied");
+                b.setMessage("Sorry, but permission is denied!\n" +
+                        "Please, check the Read Extrnal Storage permission to application!");
+                b.setNegativeButton(android.R.string.ok, null);
+                b.show();
+                return true;
+            } else {
+                // No explanation needed, we can request the permission.
+                ActivityCompat.requestPermissions(this, new String[]{exStorage}, requestCode);
+                // MY_PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE
+                // MY_PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE is an
+                // app-defined int constant. The callback method gets the
+                // result of the request.
+            }
+
         return true;
     }
 
@@ -304,10 +313,11 @@ public class MainActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
         if (grantResults.length > 0 &&
-                permissions[0].equals(Manifest.permission.READ_EXTERNAL_STORAGE) &&
-                grantResults[0] == PackageManager.PERMISSION_GRANTED
+                permissions[0].equals(Manifest.permission.READ_EXTERNAL_STORAGE)
+                || permissions[0].equals(Manifest.permission.READ_MEDIA_AUDIO)
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED
         ) {
-            if (requestCode == 2) {
+            if (requestCode == 10) {
                 openMusicFileDialog();
             }
         }
