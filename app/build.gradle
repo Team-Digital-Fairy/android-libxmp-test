@@ -7,7 +7,7 @@ android {
 
     defaultConfig {
         applicationId "team.digitalfairy.lencel.jni_shared_test"
-        minSdk 28
+        minSdk 26
         targetSdk 33
         versionCode 1
         versionName "1.0"

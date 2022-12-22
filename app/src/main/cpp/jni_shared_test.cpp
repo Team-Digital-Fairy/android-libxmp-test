@@ -51,8 +51,6 @@ static xmp_module_info mi;
 static xmp_frame_info fi;
 struct xmp_test_info ti;
 
-
-
 extern "C" {
 
 static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {

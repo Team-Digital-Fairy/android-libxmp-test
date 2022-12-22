@@ -13,6 +13,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
@@ -20,10 +21,12 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.media.AudioManager;
 import android.media.session.MediaSession;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.IBinder;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -130,9 +133,10 @@ public class MainActivity extends AppCompatActivity {
             if(isPaused) return;
             if(sf != null) sf.cancel(true);
 
-            currentView++;
+
             Toast t = Toast.makeText(this,String.format("View changed to %d",(currentView % viewLength)),Toast.LENGTH_SHORT);
 
+            currentView++;
             switch(currentView % viewLength) {
                 case 0:
                     runView();
@@ -205,6 +209,8 @@ public class MainActivity extends AppCompatActivity {
         startForegroundService(sI);
         bindService(sI, connection, Context.BIND_AUTO_CREATE);
 
+        isServiceRunning = true;
+
         if(sf == null && currentView != -1) {
             // if thread is running on Stop condition
             switch(currentView % viewLength) {
@@ -246,6 +252,8 @@ public class MainActivity extends AppCompatActivity {
 
             // But remember last run
         }
+
+        //isServiceRunning = false;
     }
 
     @Override
@@ -265,13 +273,36 @@ public class MainActivity extends AppCompatActivity {
 
 
     private boolean checkFilePermissions(int requestCode) {
+        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+
+            if(!Environment.isExternalStorageManager()) {
+                // if I don't have the MANAGE_EXTERNAL_STORAGE
+                AlertDialog.Builder b = new AlertDialog.Builder(this);
+                b.setTitle("Permission denied");
+                b.setMessage("Sorry, but permission is denied!\n" +
+                        "Please, check the Read Extrnal Storage permission to application!");
+                b.setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    Uri ri = Uri.parse("package:"+BuildConfig.APPLICATION_ID);
+                    Log.d(MAINACTIVITY_LOGTAG,"ri "+ri);
+                    Intent in = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                    startActivity(in);
+                });
+                b.setNegativeButton(android.R.string.cancel, null);
+                b.show();
+            } else return false;
+
+            return true;
+        }
+
+        // TODO: properly do this to request MANAGE_EXTERNAL_STORAGE!
         final int grant = PackageManager.PERMISSION_GRANTED;
         String exStorage = Manifest.permission.READ_EXTERNAL_STORAGE;
 
         // TODO: Seems A13 now requires more "Better" permissions...
+        /*
         if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             exStorage = Manifest.permission.READ_MEDIA_AUDIO;
-        }
+        }*/
 
             if (ContextCompat.checkSelfPermission(this, exStorage) == grant) {
                 Log.d(MAINACTIVITY_LOGTAG, "File permission is granted");
@@ -294,6 +325,10 @@ public class MainActivity extends AppCompatActivity {
                         "Please, check the Read Extrnal Storage permission to application!");
                 b.setNegativeButton(android.R.string.ok, null);
                 b.show();
+
+                // TODO: do request a Unlimited permission; since it's impossible to access to random data that isn't in the list of allowed file.
+
+
                 return true;
             } else {
                 // No explanation needed, we can request the permission.
@@ -331,6 +366,8 @@ public class MainActivity extends AppCompatActivity {
                     m_lastPath = lastPath;
                     if(!isServiceRunning)
                         startForegroundService(sI);
+
+                    isServiceRunning = true;
 
                     if(sf != null) sf.cancel(true);
 
@@ -428,6 +465,8 @@ public class MainActivity extends AppCompatActivity {
             tvs_ch[i] = new TextView(this);
             tvs[i].setTypeface(Typeface.MONOSPACE);
             tvs_ch[i].setTypeface(Typeface.MONOSPACE);
+            tvs[i].setTextSize(12.0F);
+            tvs_ch[i].setTextSize(12.0F);
             channelListView.addView(tvs[i]);
             channelListView.addView(tvs_ch[i]);
         }
