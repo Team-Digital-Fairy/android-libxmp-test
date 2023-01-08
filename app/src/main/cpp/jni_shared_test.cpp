@@ -24,7 +24,7 @@ static pthread_mutex_t lock_frameinfo;
 
 
 static int16_t *buffer[2]; // buffer for audio
-static uint32_t buffer_size = 192; // actual buffer size 44100 counts in 16bit
+static uint32_t buffer_size = 256; // actual buffer size 44100 counts in 16bit
 static uint8_t currentbuffer = 0;
 static uint32_t renderedSz[2];
 static uint32_t sample_rate = 48000;

@@ -67,7 +67,7 @@ public class MainActivity extends AppCompatActivity {
 
     private String m_lastPath = "";
     private NotificationManager nm;
-    private String notificationId = "Notification1";
+    private final String notificationId = "Notification1";
 
     private boolean isServiceRunning = true;
     private Intent sI;
@@ -210,6 +210,8 @@ public class MainActivity extends AppCompatActivity {
         bindService(sI, connection, Context.BIND_AUTO_CREATE);
 
         isServiceRunning = true;
+
+        if(!isPaused) mService.updateTitle(LibXMP.getLoadedTitleOrFilename());
 
         if(sf == null && currentView != -1) {
             // if thread is running on Stop condition
