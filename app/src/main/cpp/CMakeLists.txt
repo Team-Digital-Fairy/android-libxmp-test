@@ -60,6 +60,11 @@ add_subdirectory(
 #add_library(xmp INTERFACE)
 #target_link_libraries(xmp INTERFACE xmp_static)
 
+find_package(
+        oboe
+        REQUIRED CONFIG
+)
+
 # ....
 target_link_libraries( # Specifies the target library.
         jni_shared_test
@@ -69,6 +74,7 @@ target_link_libraries( # Specifies the target library.
         XMP_IF # ORDER is important, if xmp depends on lib, put it BEFORE log
         ${log-lib}
         ${opensl-lib}
+        oboe::oboe
         )
 
 

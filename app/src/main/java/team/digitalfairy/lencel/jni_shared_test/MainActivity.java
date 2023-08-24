@@ -1,5 +1,11 @@
 package team.digitalfairy.lencel.jni_shared_test;
 
+import static android.content.Intent.ACTION_OPEN_DOCUMENT_TREE;
+
+import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -11,10 +17,12 @@ import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -26,7 +34,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.IBinder;
+import android.provider.DocumentsContract;
 import android.provider.Settings;
+import android.support.v4.media.session.MediaSessionCompat;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -47,6 +57,9 @@ public class MainActivity extends AppCompatActivity {
     private final ScheduledExecutorService ex = Executors.newScheduledThreadPool(3);
     private ScheduledFuture<?> sf = null;
     private final int viewLength = 6;
+
+    private IntentFilter intentFilter = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
+
 
     TextView titleText;
     TextView statusText;
@@ -69,16 +82,34 @@ public class MainActivity extends AppCompatActivity {
     private NotificationManager nm;
     private final String notificationId = "Notification1";
 
-    private boolean isServiceRunning = true;
+    private boolean isServiceRunning = false;
     private Intent sI;
     private MainService mService;
 
+    public static BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String state = intent.getAction();
+            Log.i("broadcast","Got state "+state);
+        }
+    };
+
+    public static MediaSessionCompat.Callback callback = new MediaSessionCompat.Callback() {
+        @Override
+        public void onPause() {
+            super.onPause();
+            LibXMP.togglePause();
+        }
+    };
+
     private void createNotificationChannel() {
         if(nm.getNotificationChannel(notificationId) == null) {
-            NotificationChannel ch = new NotificationChannel(notificationId, "LibXMP Playback Service Notification", NotificationManager.IMPORTANCE_DEFAULT);
+            NotificationChannel ch = new NotificationChannel(notificationId, "LibXMP Playback Service Notification", NotificationManager.IMPORTANCE_LOW);
             nm.createNotificationChannel(ch);
         }
     }
+
+
 
 
     @Override
@@ -88,8 +119,8 @@ public class MainActivity extends AppCompatActivity {
 
         // acquire media session
         Log.i(MAINACTIVITY_LOGTAG,"getSystemSvc");
-        nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        createNotificationChannel();
+        //nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        //createNotificationChannel();
 
         statusText = findViewById(R.id.statusText);
         titleText = findViewById(R.id.titleText);
@@ -184,6 +215,8 @@ public class MainActivity extends AppCompatActivity {
             isServiceRunning = false;
         });
 
+
+
     }
 
     private ServiceConnection connection = new ServiceConnection() {
@@ -205,11 +238,23 @@ public class MainActivity extends AppCompatActivity {
         super.onStart();
         Log.d("MainActivity","onStart()");
 
-        sI = new Intent(this, MainService.class);
-        startForegroundService(sI);
-        bindService(sI, connection, Context.BIND_AUTO_CREATE);
+        // Check for permission
+        int permission = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE);
+        if (permission != PackageManager.PERMISSION_GRANTED) {
+            // We don't have permission so prompt the user
+            ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                    5
+            );
+        }
 
-        isServiceRunning = true;
+        if(!isServiceRunning) {
+            sI = new Intent(this, MainService.class);
+            startForegroundService(sI);
+            bindService(sI, connection, Context.BIND_AUTO_CREATE);
+            isServiceRunning = true;
+        }
 
         if(!isPaused) mService.updateTitle(LibXMP.getLoadedTitleOrFilename());
 
@@ -245,7 +290,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onStop() {
         super.onStop();
         Log.d("MainActivity","onStop()");
-        unbindService(connection);
+        //unbindService(connection);
 
         // Gotta end all bg threads; recover on onStart
         if(currentView != -1) {
@@ -261,21 +306,85 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        unbindService(connection);
         // Stop all LibXMP
         LibXMP.unloadFile();
         // TODO: Implement close SLES
     }
 
+    ActivityResultLauncher<Intent> OpenDialog = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultCallback<ActivityResult>() {
+                @Override
+                public void onActivityResult(ActivityResult result) {
+                    if(result.getResultCode() == RESULT_OK) {
+                        Intent resData = result.getData();
+                        if(resData != null) {
+                            Uri uri = resData.getData();
+                            Log.i("Dialog", "onActivityResult: "+uri.getPath());
+                            String[] pt = uri.getPath().split(":");
+                            if(pt[0].equals("/tree/primary")) {
+                                if(pt.length > 1) {
+                                    Log.i("Dialog","PathRes = "+Environment.getExternalStorageDirectory().toString() + "/" + pt[1]);
+                                    openMusicFileDialog(Environment.getExternalStorageDirectory().toString() + "/" + pt[1]);
+                                }
+                            }
+                            //openMusicFileDialog(uri);
+                        }
+                    }
+                }
+            }
+    );
+
+    ActivityResultLauncher<Intent> readFile = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultCallback<ActivityResult>() {
+                @Override
+                public void onActivityResult(ActivityResult result) {
+                    if(result.getResultCode() == RESULT_OK) {
+                        Intent resData = result.getData();
+                        if(resData != null) {
+                            Uri uri = resData.getData();
+                            Log.i("Dialog", "onActivityResult: " + uri.getPath());
+                            String[] pt = uri.getPath().split(":");
+                            if(pt[0].equals("/document/primary")) {
+                                if(pt.length > 1) {
+                                    Log.i("Dialog","PathRes = "+Environment.getExternalStorageDirectory().toString() + "/" + pt[1]);
+                                    loadFile(Environment.getExternalStorageDirectory().toString() + "/" + pt[1]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+    );
+
+
     public void OnOpenFileClick(View view) {
         // Here, thisActivity is the current activity
-        if (checkFilePermissions(10))
-            return;
-        openMusicFileDialog();
+
+
+        // Request ACTION_OPEN_DOCUMENT_TREE
+        /*
+        Intent dt = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        dt.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+        OpenDialog.launch(dt);
+        */
+
+        Intent dt = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        dt.setType("*/*");
+
+        readFile.launch(dt);
     }
 
 
+
     private boolean checkFilePermissions(int requestCode) {
+        /*
         if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Check for write External Storage
+
 
             if(!Environment.isExternalStorageManager()) {
                 // if I don't have the MANAGE_EXTERNAL_STORAGE
@@ -294,7 +403,7 @@ public class MainActivity extends AppCompatActivity {
             } else return false;
 
             return true;
-        }
+        }*/
 
         // TODO: properly do this to request MANAGE_EXTERNAL_STORAGE!
         final int grant = PackageManager.PERMISSION_GRANTED;
@@ -348,80 +457,70 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-
-        if (grantResults.length > 0 &&
-                permissions[0].equals(Manifest.permission.READ_EXTERNAL_STORAGE)
-                || permissions[0].equals(Manifest.permission.READ_MEDIA_AUDIO)
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED
-        ) {
-            if (requestCode == 10) {
-                openMusicFileDialog();
-            }
+        if(grantResults.length == 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+            Log.i("PERM", "Permission Denied");
+        } else {
+            Log.i("PERM","permission granted");
         }
     }
 
-    public void openMusicFileDialog() {
+    public void loadFile(String filename) {
+        if (!isServiceRunning)
+            startForegroundService(sI);
+
+        isServiceRunning = true;
+
+        if (sf != null) sf.cancel(true);
+
+        boolean r = LibXMP.loadFile(filename);
+        Log.i("LoadFile", "LibXMP Load File! ret"+r);
+        isPaused = true;
+        if (r) {
+            if (currentView == -1) currentView = 0;
+            LibXMP.togglePause();
+            isPaused = false;
+
+            switch (currentView % viewLength) {
+                case 0:
+                    runView();
+                    break;
+
+                case 1:
+                    runView3(0);
+                    break;
+
+                case 2:
+                    //runView2(0);
+                    runView3(1);
+                    break;
+                case 3:
+                    //runView2(1);
+                    runView3(2);
+                    break;
+                case 4:
+                    //runView2(2);
+                    runView3(3);
+                    break;
+                case 5:
+                    runCommentView();
+                    break;
+            }
+            timebar.setMax((int) LibXMP.getTotalTime());
+            persistentStatusView();
+
+            Log.i(MAINACTIVITY_LOGTAG, String.format("TotalTime %d", LibXMP.getTotalTime()));
+            titleText.setText(LibXMP.getLoadedTitleOrFilename());
+            mService.updateTitle(LibXMP.getLoadedTitleOrFilename());
+        }
+    }
+
+    public void openMusicFileDialog(String ss) {
         OpenFileDialog fileDialog = new OpenFileDialog(this)
                 .setFilter(".*")
-                .setCurrentDirectory(m_lastPath)
+                .setCurrentDirectory(ss==null?m_lastPath:ss)
                 .setOpenDialogListener((fileName, lastPath) -> {
                     m_lastPath = lastPath;
-                    if(!isServiceRunning)
-                        startForegroundService(sI);
-
-                    isServiceRunning = true;
-
-                    if(sf != null) sf.cancel(true);
-
-                    boolean r = LibXMP.loadFile(fileName);
-                    isPaused = true;
-                    if(r) {
-                        if(currentView == -1) currentView = 0;
-                        LibXMP.togglePause();
-                        isPaused = false;
-
-                        switch (currentView % viewLength) {
-                            case 0:
-                                runView();
-                                break;
-
-                            case 1:
-                                runView3(0);
-                                break;
-
-                            case 2:
-                                //runView2(0);
-                                runView3(1);
-                                break;
-                            case 3:
-                                //runView2(1);
-                                runView3(2);
-                                break;
-                            case 4:
-                                //runView2(2);
-                                runView3(3);
-                                break;
-                            case 5:
-                                runCommentView();
-                                break;
-                        }
-                        timebar.setMax((int) LibXMP.getTotalTime());
-                        persistentStatusView();
-
-                        Log.i(MAINACTIVITY_LOGTAG, String.format("TotalTime %d", LibXMP.getTotalTime()));
-                        titleText.setText(LibXMP.getLoadedTitleOrFilename());
-                        mService.updateTitle(LibXMP.getLoadedTitleOrFilename());
-                        /*
-                        Notification nn = new NotificationCompat.Builder(this,notificationId)
-                                .setContentTitle(LibXMP.getLoadedTitleOrFilename())
-                                .setSmallIcon(R.drawable.ic_launcher_background)
-                                .build();
-
-                        nm.notify(100,nn);
-                        */
-
-                    }
-
+                    loadFile(fileName);
                 });
         fileDialog.show();
     }
@@ -433,6 +532,8 @@ public class MainActivity extends AppCompatActivity {
             String frameinfo_string = LibXMP.getFrameInfo();
             runOnUiThread(() -> {
                 timebar.setProgress((int) LibXMP.getRunningTime());
+                mService.updateTime((int)LibXMP.getTotalTime(),(int)LibXMP.getRunningTime());
+
                 statusText.setText(frameinfo_string);
             });
         },0,32, TimeUnit.MILLISECONDS);
@@ -489,7 +590,7 @@ public class MainActivity extends AppCompatActivity {
                     tvs_ch[i].setText(LibXMP.getRowEvt(LibXMP.getCurrentRow(),i));
                 }
             });
-        },0,32, TimeUnit.MILLISECONDS);
+        },0,30, TimeUnit.MILLISECONDS);
     }
 
     void runView3(int size) {

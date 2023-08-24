@@ -6,6 +6,8 @@
 #include <iostream>
 #include <fstream>
 #include <pthread.h>
+#include <cassert>
+
 
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
@@ -14,23 +16,24 @@
 
 #include <android/log.h>
 
+#include <oboe/Oboe.h>
+using namespace oboe;
+
 #define LOG_TAG "JNI-libxmp"
 
 #define LOG_E(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,  __VA_ARGS__);
 #define LOG_D(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG,  __VA_ARGS__);
+#define LOG_I(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG,  __VA_ARGS__);
+
 
 static pthread_mutex_t lock_context;
 static pthread_mutex_t lock_frameinfo;
 
-
-static int16_t *buffer[2]; // buffer for audio
-static uint32_t buffer_size = 256; // actual buffer size 44100 counts in 16bit
-static uint8_t currentbuffer = 0;
-static uint32_t renderedSz[2];
 static uint32_t sample_rate = 48000;
 
 const char* current_filename;
 
+/*
 static SLObjectItf engineObject;
 static SLEngineItf engineEngine;
 static SLObjectItf outputMixObject;
@@ -39,6 +42,7 @@ static SLObjectItf  bqPlayerObject = NULL;
 static SLPlayItf    bqPlayerPlay;
 static SLAndroidSimpleBufferQueueItf    bqPlayerBufferQueue;
 static SLVolumeItf                      bqPlayerVolume;
+*/
 
 static bool isPaused = true;
 static bool isLoaded = false;
@@ -53,6 +57,7 @@ struct xmp_test_info ti;
 
 extern "C" {
 
+/*
 static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {
     //LOG_D("Called! playerCallback()");
     SLresult res;
@@ -71,11 +76,11 @@ static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {
     renderedSz[currentbuffer] = buffer_size;
     xmp_get_frame_info(ctx,&fi);
 
-    /*
+
     // TODO: Can we do it better?
     xmp_play_frame(ctx);
     xmp_get_frame_info(ctx,&fi);
-    */
+
      pthread_mutex_unlock(&lock_context);
 
     res = (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],renderedSz[currentbuffer] * sizeof(int16_t) * 2); // in byte.
@@ -87,13 +92,16 @@ static void playerCallback(SLAndroidSimpleBufferQueueItf bq, void *context) {
     currentbuffer ^= 1; // first, render.
     // this requires buffer count in sample. render will be *2 internally
 }
+*/
 
 
 
 static void stopPlaying() {
     isPaused = true;
+    /*
     memset(buffer[0],0,buffer_size * sizeof(int16_t) * 2);
     memset(buffer[1],0,buffer_size * sizeof(int16_t) * 2);
+    */
     isLoaded = false;
     if(ctx != NULL) xmp_free_context(ctx);
     // TODO: Write Load function
@@ -104,30 +112,90 @@ static void stopPlaying() {
 
 };
 
-void startOpenSLES(int nsr, int fpb) {
-    SLresult res;
-    SLDataLocator_OutputMix loc_outMix;
-    SLDataSink audioSnk;
+class MyCallback : public oboe::AudioStreamDataCallback {
+public:
+    oboe::DataCallbackResult
+    onAudioReady(oboe::AudioStream *audioStream, void *audioData, int numFrames) override {
 
+        auto *outData = static_cast<int16_t *>(audioData);
+
+        pthread_mutex_lock(&lock_context);
+        pthread_mutex_lock(&lock_frameinfo);
+
+        int r = xmp_play_buffer(ctx,outData,numFrames*4,0);
+        if(r && r != -XMP_END) {
+            LOG_E("Err %d",r);
+            return oboe::DataCallbackResult::Stop;
+        }
+        //renderedSz[currentbuffer] = buffer_size;
+        xmp_get_frame_info(ctx,&fi);
+        pthread_mutex_unlock(&lock_context);
+        pthread_mutex_unlock(&lock_frameinfo);
+
+        return oboe::DataCallbackResult::Continue;
+    }
+};
+
+class ErrorCallback : public oboe::AudioStreamErrorCallback {
+public:
+    void onErrorAfterClose(AudioStream *stream, Result error) override {
+        LOG_E("%s() - error = %s",__func__,oboe::convertToText(error));
+    }
+};
+
+std::shared_ptr<oboe::AudioStream> mStream;
+std::shared_ptr<MyCallback> mMyCallback;
+std::shared_ptr<ErrorCallback> mErrorCallback;
+
+void startOpenSLES(int nsr, int fpb) {
     assert(pthread_mutex_init(&lock_context, NULL) == 0);
     assert(pthread_mutex_init(&lock_frameinfo, NULL) == 0);
 
     //Init
     ctx = xmp_create_context();
 
-    buffer_size = fpb * 2 * 2; // Stereo
+    //buffer_size = fpb * 2 * 2; // Stereo
     //buffer_size = 48000;
     sample_rate = nsr;
 
-    LOG_D("C-Side: OpenSL start with sample rate %d, buffersz %d",sample_rate,buffer_size);
+    LOG_D("C-Side: Oboe start with sample rate %d, fpb %d",sample_rate,fpb);
 
     // allocate buffer
-    buffer[0] = static_cast<int16_t *>(malloc(buffer_size * sizeof(int16_t) * 2)); // buffer_size is in 16bit. malloc() returns in byte. and render in stereo.
-    buffer[1] = static_cast<int16_t *>(malloc(buffer_size * sizeof(int16_t) * 2));
+    mMyCallback = std::make_shared<MyCallback>();
+    mErrorCallback = std::make_shared<ErrorCallback>();
 
-    memset(buffer[0],0,buffer_size * sizeof(int16_t) * 2);
-    memset(buffer[1],0,buffer_size * sizeof(int16_t) * 2);
+    // Init Oboe library
 
+    oboe::AudioStreamBuilder b;
+
+    oboe::DefaultStreamValues::FramesPerBurst = (int32_t) fpb;
+
+    b.setDirection(oboe::Direction::Output);
+    b.setPerformanceMode(oboe::PerformanceMode::LowLatency);
+    b.setSharingMode(oboe::SharingMode::Exclusive);
+    //b.setFramesPerDataCallback(512);
+    b.setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Best);
+    //b.setBufferCapacityInFrames(2400);
+    b.setFormat(oboe::AudioFormat::I16);
+    b.setSampleRate(48000);
+    //b.setAudioApi(oboe::AudioApi::OpenSLES);
+
+    //b.setChannelCount(oboe::ChannelCount::Mono);
+
+    b.setDataCallback(mMyCallback);
+    b.setErrorCallback(mErrorCallback);
+
+    oboe::Result r = b.openStream(mStream);
+
+    LOG_I("Ready");
+    LOG_I("API = %s",mStream->getAudioApi() == oboe::AudioApi::AAudio?"AAudio":"OpenSLES");
+    LOG_I("Format = %s",mStream->getFormat() == oboe::AudioFormat::I16?"I16":"Float");
+
+    LOG_I("BufCap = %d",mStream->getBufferCapacityInFrames());
+    LOG_I("FPC = %d",mStream->getBufferCapacityInFrames());
+    LOG_I("FPB = %d",mStream->getFramesPerBurst());
+
+    /*
     res = slCreateEngine(&engineObject, 0, NULL, 0, NULL, NULL);
     assert(res == SL_RESULT_SUCCESS);
     res = (*engineObject)->Realize(engineObject,SL_BOOLEAN_FALSE);
@@ -192,10 +260,14 @@ void startOpenSLES(int nsr, int fpb) {
     }
 
     currentbuffer ^= 1;
+    */
 }
 
 void endOpenSLES() {
     SLresult res;
+    Result result;
+    result = mStream->requestStop();
+    /*
     res = (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_STOPPED);
     assert(res == SL_RESULT_SUCCESS);
 
@@ -221,6 +293,7 @@ void endOpenSLES() {
         engineEngine = NULL;
     }
     free(buffer[0]);
+     */
     //free(buffer[1]);
 }
 
@@ -268,7 +341,7 @@ extern "C"
 JNIEXPORT jboolean JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jclass clazz, jstring filename) {
     if(ctx == NULL) ctx = xmp_create_context(); // Should've been done.
-    (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
+    Result result = mStream->requestPause();
     isPaused = true;
 
     int ret;
@@ -280,8 +353,10 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     isLoaded = false;
 
     FILE *fp = fopen(filepath,"rb");
+    LOG_D("fpath = %s",filepath);
+
     if(fp == NULL) {
-        LOG_E("File is not a valid file");
+        LOG_E("File is not a valid file err = %d (%s)",errno, strerror(errno));
         return false;
     }
     if((ret = xmp_test_module_from_file(fp,&ti))) {
@@ -330,16 +405,15 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     return true;
 }
 
-
-
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getFrameInfo(JNIEnv *env, jclass clazz) {
-    static char string_buf[256];   pthread_mutex_lock(&lock_frameinfo);
+    static char string_buf[256];
+    pthread_mutex_lock(&lock_frameinfo);
     xmp_frame_info cur_fi = fi;
     pthread_mutex_unlock(&lock_frameinfo);
 
-    snprintf(string_buf,256,"Ord %02X/%02X Ptn %02X Spd %d Bpm %3d Row %2d/%2d\nF %d V %02X Vir %3d/%3d %d/%d",cur_fi.pos,mi.mod->len,cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,cur_fi.num_rows,
+    snprintf(string_buf,256,"Ord %02X/%02X Ptn %02X Spd %d Bpm %3d Row %2d/%2d\nF %2d V %02X Vir %3d/%3d %d/%d",cur_fi.pos,mi.mod->len,cur_fi.pattern,cur_fi.speed,cur_fi.bpm,cur_fi.row,cur_fi.num_rows,
              cur_fi.frame,cur_fi.volume,cur_fi.virt_used,cur_fi.virt_channels,cur_fi.time,cur_fi.total_time);
     return env->NewStringUTF(string_buf);
 }
@@ -347,16 +421,17 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getFrameInfo(JNIEnv *env,
 extern "C"
 JNIEXPORT void JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_togglePause(JNIEnv *env, jclass clazz) {
+    Result result;
     if(!isLoaded) return;
+
     isPaused = !isPaused;
     if(isPaused) {
-        (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],buffer_size * sizeof(int16_t) * 2);
-        (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
+        result = mStream->requestPause();
     } else {
-        //(*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[currentbuffer],buffer_size * sizeof(int16_t) * 2);
-        (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PLAYING);
+
+        result = mStream->requestStart();
     }
-    currentbuffer ^= 1;
+
 }
 extern "C"
 JNIEXPORT jstring JNICALL
@@ -588,7 +663,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_getInstrumentCount(JNIEnv
 extern "C"
 JNIEXPORT jboolean JNICALL
 Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_unloadFile(JNIEnv *env, jclass clazz) {
-    (*bqPlayerPlay)->SetPlayState(bqPlayerPlay, SL_PLAYSTATE_PAUSED);
+    Result result = mStream->requestStop();
     isPaused = true;
 
     pthread_mutex_lock(&lock_context);
