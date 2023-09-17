@@ -9,7 +9,7 @@ public class LibXMP {
     public static native void startOpenSLES(int nsr, int fpb);
 
     // libxmp function
-    public static native boolean loadFile(String filename);
+    public static native boolean loadFile(int fd);
     public static native boolean unloadFile();
     public static native void togglePause();
 

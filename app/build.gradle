@@ -49,6 +49,7 @@ android {
             version '3.22.1'
         }
     }
+    namespace 'team.digitalfairy.lencel.jni_shared_test'
 }
 
 dependencies {

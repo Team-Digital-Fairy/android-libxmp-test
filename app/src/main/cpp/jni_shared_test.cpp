@@ -7,8 +7,9 @@
 #include <fstream>
 #include <pthread.h>
 #include <cassert>
-
-
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <SLES/OpenSLES.h>
 #include <SLES/OpenSLES_Android.h>
 
@@ -339,21 +340,28 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_startOpenSLES(JNIEnv *env
 }
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jclass clazz, jstring filename) {
+Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jclass clazz, jint fd) {
     if(ctx == NULL) ctx = xmp_create_context(); // Should've been done.
     Result result = mStream->requestPause();
     isPaused = true;
 
     int ret;
-    const char* filepath = env->GetStringUTFChars(filename,0);
+    //const char* filepath = env->GetStringUTFChars(filename,0);
 
     xmp_end_player(ctx);
     if(isLoaded) xmp_release_module(ctx);
 
     isLoaded = false;
 
-    FILE *fp = fopen(filepath,"rb");
-    LOG_D("fpath = %s",filepath);
+    // FIXME: Patch->passing by fd
+    int curfd = dup(fd);
+    struct stat fb{};
+    fstat(curfd,&fb);
+    FILE *fp = fdopen(curfd,"rb");
+    char filePath[512];
+
+    //FILE *fp = fopen(filepath,"rb");
+    //LOG_D("fpath = %s",filepath);
 
     if(fp == NULL) {
         LOG_E("File is not a valid file err = %d (%s)",errno, strerror(errno));
@@ -373,7 +381,7 @@ Java_team_digitalfairy_lencel_jni_1shared_1test_LibXMP_loadFile(JNIEnv *env, jcl
     rewind(fp);
     // get filesize end
 
-    current_filename = basename(filepath);
+    //current_filename = basename(filepath);
 
     // TODO: Write some configuration (You need to trash the load_module to change the config on-the-fly)
     ret = xmp_load_module_from_file(ctx,fp,filesize);

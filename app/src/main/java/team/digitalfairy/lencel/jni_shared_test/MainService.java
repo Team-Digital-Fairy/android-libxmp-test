@@ -22,11 +22,11 @@ import androidx.core.app.NotificationCompat;
 
 public class MainService extends Service {
     private NotificationManager nm;
-    private MediaSessionCompat mediaSession;
+    public static MediaSessionCompat mediaSession;
     private String notificationId = "Notification1";
     private NotificationCompat.Builder bb;
 
-    private PlaybackState.Builder state;
+    private PlaybackStateCompat.Builder state;
     private final IBinder ib = new LocalBinder();
 
 
@@ -39,6 +39,7 @@ public class MainService extends Service {
     public void updateTitle(String title) {
         // nothing to do
         Log.i("MainService", "Got title "+title);
+        mediaSession.setActive(true);
         bb.setContentTitle(title);
         nm.notify(100,bb.build());
     }
@@ -50,9 +51,9 @@ public class MainService extends Service {
         //bb.setProgress(1000,500,true);
         //nm.notify(100,bb.build());
         
-        state.setState(PlaybackState.STATE_PLAYING,0,1.0F);
+        //state.setState(PlaybackState.STATE_PLAYING,0,1.0F);
 
-        mediaSession.setPlaybackState(PlaybackStateCompat.fromPlaybackState(state.build()));
+        //mediaSession.setPlaybackState(PlaybackStateCompat.fromPlaybackState(state.build()));
 
     }
 
@@ -63,10 +64,88 @@ public class MainService extends Service {
         }
     }
 
+
+    public MediaSessionCompat.Callback callback = new MediaSessionCompat.Callback() {
+
+        @Override
+        public void onPause() {
+            super.onPause();
+            Log.i("callback","onPause");
+            MainActivity.isPaused = !MainActivity.isPaused;
+            LibXMP.togglePause();
+            if(MainActivity.isPaused) {
+                MainService.mediaSession.setPlaybackState(
+                        new PlaybackStateCompat.Builder()
+                                .setState(PlaybackStateCompat.STATE_PAUSED, 100, 1.0f)
+                                .setActions(PlaybackStateCompat.ACTION_PLAY |
+                                        PlaybackStateCompat.ACTION_PAUSE |
+                                        PlaybackStateCompat.ACTION_PLAY_PAUSE |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
+
+                                .build()
+                );
+                MainService.mediaSession.setActive(false);
+
+            } else {
+                MainService.mediaSession.setPlaybackState(
+                        new PlaybackStateCompat.Builder()
+                                .setState(PlaybackStateCompat.STATE_PLAYING, 100, 1.0f)
+                                .setActions(PlaybackStateCompat.ACTION_PLAY |
+                                        PlaybackStateCompat.ACTION_PAUSE |
+                                        PlaybackStateCompat.ACTION_PLAY_PAUSE |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
+
+                                .build()
+                );
+                MainService.mediaSession.setActive(true);
+
+            }
+        }
+
+        @Override
+        public void onPlay() {
+            super.onPlay();
+            Log.i("callback","onPlay");
+            MainActivity.isPaused = !MainActivity.isPaused;
+            LibXMP.togglePause();
+            if(MainActivity.isPaused) {
+                MainService.mediaSession.setPlaybackState(
+                        new PlaybackStateCompat.Builder()
+                                .setState(PlaybackStateCompat.STATE_PAUSED, 100, 1.0f)
+                                .setActions(PlaybackStateCompat.ACTION_PLAY |
+                                        PlaybackStateCompat.ACTION_PAUSE |
+                                        PlaybackStateCompat.ACTION_PLAY_PAUSE |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
+
+                                .build()
+                );
+                MainService.mediaSession.setActive(false);
+
+            } else {
+                MainService.mediaSession.setPlaybackState(
+                        new PlaybackStateCompat.Builder()
+                                .setState(PlaybackStateCompat.STATE_PLAYING, 100, 1.0f)
+                                .setActions(PlaybackStateCompat.ACTION_PLAY |
+                                        PlaybackStateCompat.ACTION_PAUSE |
+                                        PlaybackStateCompat.ACTION_PLAY_PAUSE |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
+
+                                .build()
+                );
+                MainService.mediaSession.setActive(true);
+
+            }
+        }
+    };
+
     private void configureMediaSession() {
 
         mediaSession = new MediaSessionCompat(this, "MediaSession");
-        mediaSession.setCallback(MainActivity.callback);
+        mediaSession.setCallback(callback);
     }
 
     @Override
@@ -75,6 +154,8 @@ public class MainService extends Service {
         nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         createNotificationChannel();
         configureMediaSession();
+
+
         /*
         Notification nn = new NotificationCompat.Builder(this,notificationId)
                 .setContentText("Service is running.")
@@ -103,13 +184,14 @@ public class MainService extends Service {
                 .setStyle(new androidx.media.app.NotificationCompat.MediaStyle().setMediaSession(mediaSession.getSessionToken()));
 
 
-        state = new PlaybackState.Builder()
+        state = new PlaybackStateCompat.Builder()
+                .setState(PlaybackStateCompat.STATE_NONE,0,1.0f)
                 .setActions(
-                        PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PLAY_PAUSE |
-                                PlaybackState.ACTION_PAUSE);
+                        PlaybackStateCompat.ACTION_PLAY | PlaybackStateCompat.ACTION_PLAY_PAUSE |
+                                PlaybackStateCompat.ACTION_PAUSE | PlaybackStateCompat.ACTION_SKIP_TO_NEXT | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS);
                 //.setState(PlaybackState.STATE_PLAYING, 30, 1.0F, SystemClock.elapsedRealtime());
 
-        mediaSession.setPlaybackState(PlaybackStateCompat.fromPlaybackState(state.build()));
+        mediaSession.setPlaybackState(state.build());
 
 
         nn = bb.build();
@@ -117,7 +199,8 @@ public class MainService extends Service {
         startForeground(100,nn);
 
         IntentFilter iF = new IntentFilter();
-        iF.addAction("PAUSE");
+        iF.addAction("pause");
+        iF.addAction("play");
 
         registerReceiver(MainActivity.broadcastReceiver,iF);
 

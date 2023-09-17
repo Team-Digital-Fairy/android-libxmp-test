@@ -34,10 +34,13 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.IBinder;
+import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.support.v4.media.session.MediaSessionCompat;
+import android.support.v4.media.session.PlaybackStateCompat;
 import android.util.Log;
+import android.view.Choreographer;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -46,20 +49,24 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements Choreographer.FrameCallback {
     private final String MAINACTIVITY_LOGTAG = "MainActivity";
     private final ScheduledExecutorService ex = Executors.newScheduledThreadPool(3);
     private ScheduledFuture<?> sf = null;
     private final int viewLength = 6;
 
+    private Choreographer choreographer;
     private IntentFilter intentFilter = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
 
+    private ParcelFileDescriptor pfd;
 
     TextView titleText;
     TextView statusText;
@@ -75,10 +82,9 @@ public class MainActivity extends AppCompatActivity {
 
     static int currentView = -1;
     boolean isScrollEnabled = true;
-    boolean isPaused = true;
+    static boolean isPaused = true;
     boolean mBound = false;
 
-    private String m_lastPath = "";
     private NotificationManager nm;
     private final String notificationId = "Notification1";
 
@@ -94,13 +100,7 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    public static MediaSessionCompat.Callback callback = new MediaSessionCompat.Callback() {
-        @Override
-        public void onPause() {
-            super.onPause();
-            LibXMP.togglePause();
-        }
-    };
+
 
     private void createNotificationChannel() {
         if(nm.getNotificationChannel(notificationId) == null) {
@@ -109,18 +109,16 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
-
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
         // acquire media session
-        Log.i(MAINACTIVITY_LOGTAG,"getSystemSvc");
+        //Log.i(MAINACTIVITY_LOGTAG,"getSystemSvc");
         //nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         //createNotificationChannel();
+        choreographer = Choreographer.getInstance();
 
         statusText = findViewById(R.id.statusText);
         titleText = findViewById(R.id.titleText);
@@ -134,18 +132,6 @@ public class MainActivity extends AppCompatActivity {
         timebar = findViewById(R.id.runntingTimeBar);
         pauseButton = findViewById(R.id.pauseButton);
         changeViewButton = findViewById(R.id.changeViewButton);
-
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P)
-            m_lastPath = Environment.getExternalStorageDirectory().getPath();
-        else
-            m_lastPath = "/storage/emulated/0";
-
-        // check for isExternalStorameManager()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if(Environment.isExternalStorageManager()) {
-                Log.d(MAINACTIVITY_LOGTAG, ">=R, it is ExternalStorageManager!");
-            }
-        }
 
         System.loadLibrary("jni_shared_test");
         Log.d(MAINACTIVITY_LOGTAG,LibXMP.getXMPVersion());
@@ -198,6 +184,38 @@ public class MainActivity extends AppCompatActivity {
             // make it so it doesn't call togglePause when it's not loaded
             isPaused = !isPaused;
             LibXMP.togglePause();
+            if(isPaused) {
+                MainService.mediaSession.setPlaybackState(
+                        new PlaybackStateCompat.Builder()
+                                .setState(PlaybackStateCompat.STATE_PAUSED, 100, 1.0f)
+                                .setActions(PlaybackStateCompat.ACTION_PLAY |
+                                        PlaybackStateCompat.ACTION_PAUSE |
+                                        PlaybackStateCompat.ACTION_PLAY_PAUSE |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
+
+                                .build()
+                );
+                MainService.mediaSession.setActive(false);
+
+            } else {
+                MainService.mediaSession.setPlaybackState(
+                        new PlaybackStateCompat.Builder()
+                                .setState(PlaybackStateCompat.STATE_PLAYING, 100, 1.0f)
+                                .setActions(PlaybackStateCompat.ACTION_PLAY |
+                                        PlaybackStateCompat.ACTION_PAUSE |
+                                        PlaybackStateCompat.ACTION_PLAY_PAUSE |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
+
+                                .build()
+                );
+                MainService.mediaSession.setActive(true);
+
+            }
+
+            choreographer.postFrameCallback(this);
+
         });
 
         stopButton.setOnClickListener((v) -> {
@@ -211,7 +229,12 @@ public class MainActivity extends AppCompatActivity {
             LibXMP.togglePause();
             isPaused = true;
             LibXMP.unloadFile();
-
+            // FIXME: PATCH->pfdclose
+            try {
+                pfd.close();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
             isServiceRunning = false;
         });
 
@@ -237,17 +260,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onStart() {
         super.onStart();
         Log.d("MainActivity","onStart()");
-
-        // Check for permission
-        int permission = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE);
-        if (permission != PackageManager.PERMISSION_GRANTED) {
-            // We don't have permission so prompt the user
-            ActivityCompat.requestPermissions(
-                    this,
-                    new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
-                    5
-            );
-        }
 
         if(!isServiceRunning) {
             sI = new Intent(this, MainService.class);
@@ -309,32 +321,14 @@ public class MainActivity extends AppCompatActivity {
         unbindService(connection);
         // Stop all LibXMP
         LibXMP.unloadFile();
+        try {
+            pfd.close();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
         // TODO: Implement close SLES
     }
 
-    ActivityResultLauncher<Intent> OpenDialog = registerForActivityResult(
-            new ActivityResultContracts.StartActivityForResult(),
-            new ActivityResultCallback<ActivityResult>() {
-                @Override
-                public void onActivityResult(ActivityResult result) {
-                    if(result.getResultCode() == RESULT_OK) {
-                        Intent resData = result.getData();
-                        if(resData != null) {
-                            Uri uri = resData.getData();
-                            Log.i("Dialog", "onActivityResult: "+uri.getPath());
-                            String[] pt = uri.getPath().split(":");
-                            if(pt[0].equals("/tree/primary")) {
-                                if(pt.length > 1) {
-                                    Log.i("Dialog","PathRes = "+Environment.getExternalStorageDirectory().toString() + "/" + pt[1]);
-                                    openMusicFileDialog(Environment.getExternalStorageDirectory().toString() + "/" + pt[1]);
-                                }
-                            }
-                            //openMusicFileDialog(uri);
-                        }
-                    }
-                }
-            }
-    );
 
     ActivityResultLauncher<Intent> readFile = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
@@ -342,17 +336,33 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void onActivityResult(ActivityResult result) {
                     if(result.getResultCode() == RESULT_OK) {
-                        Intent resData = result.getData();
-                        if(resData != null) {
+                        if(result.getData() != null) {
+                            Intent resData = result.getData();
+                            Log.i("Result", "OK " + resData.getData());
                             Uri uri = resData.getData();
-                            Log.i("Dialog", "onActivityResult: " + uri.getPath());
-                            String[] pt = uri.getPath().split(":");
-                            if(pt[0].equals("/document/primary")) {
-                                if(pt.length > 1) {
-                                    Log.i("Dialog","PathRes = "+Environment.getExternalStorageDirectory().toString() + "/" + pt[1]);
-                                    loadFile(Environment.getExternalStorageDirectory().toString() + "/" + pt[1]);
-                                }
+                            Log.i("Result", "uri " + uri);
+
+                            try {
+                                pfd = getContentResolver().openFileDescriptor(uri,"r");
+                            } catch (FileNotFoundException e) {
+                                throw new RuntimeException(e);
                             }
+
+                            int fd = pfd.getFd();
+                            loadFile(fd);
+
+                            MainService.mediaSession.setPlaybackState(
+                                    new PlaybackStateCompat.Builder()
+                                            .setState(PlaybackStateCompat.STATE_PLAYING, 100, 1.0f)
+                                            .setActions(PlaybackStateCompat.ACTION_PLAY |
+                                                    PlaybackStateCompat.ACTION_PAUSE |
+                                                    PlaybackStateCompat.ACTION_PLAY_PAUSE |
+                                                    PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                                                    PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
+
+                                            .build()
+                            );
+
                         }
                     }
                 }
@@ -379,80 +389,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-
-    private boolean checkFilePermissions(int requestCode) {
-        /*
-        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Check for write External Storage
-
-
-            if(!Environment.isExternalStorageManager()) {
-                // if I don't have the MANAGE_EXTERNAL_STORAGE
-                AlertDialog.Builder b = new AlertDialog.Builder(this);
-                b.setTitle("Permission denied");
-                b.setMessage("Sorry, but permission is denied!\n" +
-                        "Please, check the Read Extrnal Storage permission to application!");
-                b.setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    Uri ri = Uri.parse("package:"+BuildConfig.APPLICATION_ID);
-                    Log.d(MAINACTIVITY_LOGTAG,"ri "+ri);
-                    Intent in = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
-                    startActivity(in);
-                });
-                b.setNegativeButton(android.R.string.cancel, null);
-                b.show();
-            } else return false;
-
-            return true;
-        }*/
-
-        // TODO: properly do this to request MANAGE_EXTERNAL_STORAGE!
-        final int grant = PackageManager.PERMISSION_GRANTED;
-        String exStorage = Manifest.permission.READ_EXTERNAL_STORAGE;
-
-        // TODO: Seems A13 now requires more "Better" permissions...
-        /*
-        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            exStorage = Manifest.permission.READ_MEDIA_AUDIO;
-        }*/
-
-            if (ContextCompat.checkSelfPermission(this, exStorage) == grant) {
-                Log.d(MAINACTIVITY_LOGTAG, "File permission is granted");
-            } else {
-                Log.d(MAINACTIVITY_LOGTAG, "File permission is revoked");
-            }
-
-
-            if ((ContextCompat.checkSelfPermission(this, exStorage) == grant))
-                return false;
-
-            // Should we show an explanation?
-            if (ActivityCompat.shouldShowRequestPermissionRationale(this, exStorage)) {
-                // Show an explanation to the user *asynchronously* -- don't block
-                // this thread waiting for the user's response! After the user
-                // sees the explanation, try again to request the permission.
-                AlertDialog.Builder b = new AlertDialog.Builder(this);
-                b.setTitle("Permission denied");
-                b.setMessage("Sorry, but permission is denied!\n" +
-                        "Please, check the Read Extrnal Storage permission to application!");
-                b.setNegativeButton(android.R.string.ok, null);
-                b.show();
-
-                // TODO: do request a Unlimited permission; since it's impossible to access to random data that isn't in the list of allowed file.
-
-
-                return true;
-            } else {
-                // No explanation needed, we can request the permission.
-                ActivityCompat.requestPermissions(this, new String[]{exStorage}, requestCode);
-                // MY_PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE
-                // MY_PERMISSIONS_REQUEST_READ_EXTERNAL_STORAGE is an
-                // app-defined int constant. The callback method gets the
-                // result of the request.
-            }
-
-        return true;
-    }
-
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
@@ -464,7 +400,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    public void loadFile(String filename) {
+    public void loadFile(int fd) {
         if (!isServiceRunning)
             startForegroundService(sI);
 
@@ -472,9 +408,11 @@ public class MainActivity extends AppCompatActivity {
 
         if (sf != null) sf.cancel(true);
 
-        boolean r = LibXMP.loadFile(filename);
-        Log.i("LoadFile", "LibXMP Load File! ret"+r);
+        boolean r = LibXMP.loadFile(fd);
+        Log.i("LoadFile", "LibXMP Load File! ret "+r);
         isPaused = true;
+        MainService.mediaSession.setActive(true);
+
         if (r) {
             if (currentView == -1) currentView = 0;
             LibXMP.togglePause();
@@ -506,37 +444,13 @@ public class MainActivity extends AppCompatActivity {
                     break;
             }
             timebar.setMax((int) LibXMP.getTotalTime());
-            persistentStatusView();
+            //persistentStatusView();
+            choreographer.postFrameCallback(this);
 
             Log.i(MAINACTIVITY_LOGTAG, String.format("TotalTime %d", LibXMP.getTotalTime()));
             titleText.setText(LibXMP.getLoadedTitleOrFilename());
             mService.updateTitle(LibXMP.getLoadedTitleOrFilename());
         }
-    }
-
-    public void openMusicFileDialog(String ss) {
-        OpenFileDialog fileDialog = new OpenFileDialog(this)
-                .setFilter(".*")
-                .setCurrentDirectory(ss==null?m_lastPath:ss)
-                .setOpenDialogListener((fileName, lastPath) -> {
-                    m_lastPath = lastPath;
-                    loadFile(fileName);
-                });
-        fileDialog.show();
-    }
-
-
-    void persistentStatusView() {
-        ex.scheduleAtFixedRate(() -> {
-            if(isPaused) return;
-            String frameinfo_string = LibXMP.getFrameInfo();
-            runOnUiThread(() -> {
-                timebar.setProgress((int) LibXMP.getRunningTime());
-                mService.updateTime((int)LibXMP.getTotalTime(),(int)LibXMP.getRunningTime());
-
-                statusText.setText(frameinfo_string);
-            });
-        },0,32, TimeUnit.MILLISECONDS);
     }
 
     void runView() {
@@ -732,4 +646,21 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+
+
+    @Override
+    public void doFrame(long l) {
+        if(isPaused) return;
+        String frameinfo_string = LibXMP.getFrameInfo();
+        runOnUiThread(() -> {
+            timebar.setProgress((int) LibXMP.getRunningTime());
+            mService.updateTime((int)LibXMP.getTotalTime(),(int)LibXMP.getRunningTime());
+
+            statusText.setText(frameinfo_string);
+        });
+
+
+        choreographer.postFrameCallback(this);
+
+    }
 }
